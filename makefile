@@ -14,6 +14,10 @@ IMAGE_TAG=latest
 EC2_USER = ec2-user
 EC2_INSTANCE_ID = i-084c4683b040ea62f
 EC2_DIR = agentic_refi
+NETWORK_NAME = refi_network
+PROD_API_CONTAINER = agentic_refi_api
+UI_CONTAINER = agentic_refi_ui
+UI_PORT = 3000
 
 build:
 	docker buildx build \
@@ -65,17 +69,26 @@ push-ecr: login-ecr build-ecr
 # --------- CONNECT TO AWS EC2 AND PULL LATEST IMAGE (DEPLOY) ----------
 
 login-ec2-and-pull:
-	aws ec2-instance-connect ssh \
+	$(eval EC2_IP := $(shell aws ec2 describe-instances --instance-ids $(EC2_INSTANCE_ID) --region $(AWS_REGION) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text))
+	ssh-keygen -t rsa -f /tmp/ec2_deploy_key -N "" -q -f /tmp/ec2_deploy_key
+	aws ec2-instance-connect send-ssh-public-key \
 		--region $(AWS_REGION) \
 		--instance-id $(EC2_INSTANCE_ID) \
-		--os-user $(EC2_USER) \
-		-- \
-		-o StrictHostKeyChecking=no \
-		-o UserKnownHostsFile=/dev/null \
-		"aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com \
+		--instance-os-user $(EC2_USER) \
+		--ssh-public-key file:///tmp/ec2_deploy_key.pub
+	ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+		-i /tmp/ec2_deploy_key $(EC2_USER)@$(EC2_IP) "\
+		 aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com \
+		 && docker system prune -f \
 		 && docker pull $(ECR_URI):$(IMAGE_TAG) \
-		 && docker stop $(CONTAINER_NAME) || true \
-		 && docker rm $(CONTAINER_NAME) || true \
-		 && docker run -d --name $(CONTAINER_NAME) --env-file ~/$(EC2_DIR)/.env -p $(PORT):$(PORT) $(ECR_URI):$(IMAGE_TAG)"
+		 && docker network create $(NETWORK_NAME) 2>/dev/null || true \
+		 && docker rm -f $(PROD_API_CONTAINER) 2>/dev/null; true \
+		 && docker rm -f $(UI_CONTAINER) 2>/dev/null; true \
+		 && docker run -d --name $(PROD_API_CONTAINER) --network $(NETWORK_NAME) --env-file ~/$(EC2_DIR)/.env -p $(PORT):$(PORT) $(ECR_URI):$(IMAGE_TAG) \
+		 && docker run -d --name $(UI_CONTAINER) --network $(NETWORK_NAME) --env-file ~/$(EC2_DIR)/.env \
+		    -e API_BASE_URL=http://$(PROD_API_CONTAINER) -e API_PORT=$(PORT) \
+		    -p $(UI_PORT):$(UI_PORT) $(ECR_URI):$(IMAGE_TAG) \
+		    streamlit run src/frontend/Agentic_Refinance_Tool.py --server.address=0.0.0.0 --server.port=$(UI_PORT)"
+	rm -f /tmp/ec2_deploy_key /tmp/ec2_deploy_key.pub
 
 full-deploy-prod: push-ecr login-ec2-and-pull
