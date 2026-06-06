@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 from client import get_recommendation
 import time
@@ -24,13 +23,6 @@ rate_str = st.text_input("What is your current mortgage interest rate (%)", plac
 current_payment_str = st.text_input("What is your current monthly mortgage payment (principal and interest only)?", placeholder="e.g., $3,350")
 mortgage_balance_str = st.text_input("What is the remaining balance on your mortgage loan?", placeholder="e.g., $500,000")
 run = st.button("Get recommendation")
-
-# Show the user what API it's hitting
-st.write(":wrench: Backend API:", os.getenv("API_BASE_URL"),
-         ":", os.getenv("API_PORT"),
-         "/", os.getenv("API_PATH"))
-
-st.write(f":brain: LLM: {os.getenv('OPENAI_MODEL_NAME')}")
 
 def clean_strings(text: str) -> str:
     return text.strip().replace("%", "").replace("$", "")

@@ -13,7 +13,7 @@ IMAGE_TAG=latest
 
 EC2_USER = ec2-user
 EC2_INSTANCE_ID = i-084c4683b040ea62f
-EC2_DIR = agentic-refi
+EC2_DIR = agentic_refi
 
 build:
 	docker buildx build \
@@ -64,7 +64,6 @@ push-ecr: login-ecr build-ecr
 
 # --------- CONNECT TO AWS EC2 AND PULL LATEST IMAGE (DEPLOY) ----------
 
-# FIX
 login-ec2-and-pull:
 	aws ec2-instance-connect ssh \
 		--region $(AWS_REGION) \
@@ -73,6 +72,10 @@ login-ec2-and-pull:
 		-- \
 		-o StrictHostKeyChecking=no \
 		-o UserKnownHostsFile=/dev/null \
-		"pwd && ls"
+		"aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com \
+		 && docker pull $(ECR_URI):$(IMAGE_TAG) \
+		 && docker stop $(CONTAINER_NAME) || true \
+		 && docker rm $(CONTAINER_NAME) || true \
+		 && docker run -d --name $(CONTAINER_NAME) --env-file ~/$(EC2_DIR)/.env -p $(PORT):$(PORT) $(ECR_URI):$(IMAGE_TAG)"
 
 full-deploy-prod: push-ecr login-ec2-and-pull

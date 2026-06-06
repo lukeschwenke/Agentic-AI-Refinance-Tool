@@ -20,9 +20,13 @@ class State(TypedDict):
     break_even: float | None
     recommendation: str
 
-llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL_NAME"),
+llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL_NAME", "gpt-5.4-mini"),
                  api_key=os.getenv("OPENAI_API_KEY"),
                  temperature=0.1)
+
+llm_finalizer = ChatOpenAI(model=os.getenv("OPENAI_FINALIZER_MODEL_NAME", "gpt-5.4"),
+                            api_key=os.getenv("OPENAI_API_KEY"),
+                            temperature=0.1)
 
 # #Ollama Support
 # llm = ChatOllama(model="gpt-oss:20b",

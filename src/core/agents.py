@@ -1,4 +1,4 @@
-from core.define_state_and_llm import State, llm, llm_with_tools
+from core.define_state_and_llm import State, llm, llm_finalizer, llm_with_tools
 from langchain_core.prompts import PromptTemplate
 import json
 from core.tools import *
@@ -190,7 +190,7 @@ def finalizer_agent(state: State) -> dict:
         new_payment=state['new_payment'],
     )
 
-    response = llm.invoke(final_prompt)
+    response = llm_finalizer.invoke(final_prompt)
     state["recommendation"] = response
     state["path"].append("finalizer_agent")
     return state
