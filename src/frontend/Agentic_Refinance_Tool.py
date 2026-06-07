@@ -1,90 +1,84 @@
 import streamlit as st
 from client import get_recommendation
-import time
 import html
-from pathlib import Path
+from ui import apply_theme, hero, fmt_pct, fmt_money, fmt_months
 
 st.set_page_config(page_title="RefiAI", page_icon="🏡")
+apply_theme()
 
-st.title("RefiAI")
-st.markdown("##### Hello! Use RefiAI, an Agentic AI–powered refinance tool, to determine if now is a good time for you to refinance.")
-
-FRONTEND_DIR = Path(__file__).resolve().parents[0]
-IMG_PATH = FRONTEND_DIR / "images" / "landing_page_v1.png"
-#st.set_page_config(layout="wide")
-st.image(str(IMG_PATH), width="stretch")
+hero(
+    title_html="Refi<span>AI</span>",
+    subtitle=(
+        "Should you refinance? A team of AI agents checks live mortgage rates, the "
+        "10-year Treasury yield, and your personal break-even — then gives you a "
+        "straight answer."
+    ),
+    pills=["🌐 National + DC-area rates", "📊 Break-even analysis", "⚡ Real-time market data"],
+    badge="Live market intelligence",
+)
 
 # Ensure there is a place to store the last response
 if "resp" not in st.session_state:
     st.session_state.resp = None
 
-# User Input + Basic Validation
-rate_str = st.text_input("What is your current mortgage interest rate (%)", placeholder="e.g., 6.125")
-current_payment_str = st.text_input("What is your current monthly mortgage payment (principal and interest only)?", placeholder="e.g., $3,350")
-mortgage_balance_str = st.text_input("What is the remaining balance on your mortgage loan?", placeholder="e.g., $500,000")
-run = st.button("Get recommendation")
 
 def clean_strings(text: str) -> str:
-    return text.strip().replace("%", "").replace("$", "")
+    return text.strip().replace("%", "").replace("$", "").replace(",", "")
+
+
+# ---- Input card ----
+with st.container(border=True):
+    st.markdown('<div class="refi-eyebrow">Your mortgage</div>', unsafe_allow_html=True)
+    st.markdown("##### Tell us about your current loan")
+    rate_str = st.text_input("Current mortgage interest rate (%)", placeholder="e.g., 6.125")
+    current_payment_str = st.text_input(
+        "Current monthly payment — principal & interest only", placeholder="e.g., $3,350"
+    )
+    mortgage_balance_str = st.text_input(
+        "Remaining balance on your mortgage", placeholder="e.g., $500,000"
+    )
+    run = st.button("Get recommendation  →", use_container_width=True)
 
 if run:
-    if not rate_str or not rate_str.strip():
-        st.error("Please enter an interest rate.")
-    if not current_payment_str or not current_payment_str.strip():
-        st.error("Please enter a current monthly payment.")
-    if not mortgage_balance_str or not mortgage_balance_str.strip():
-        st.error("Please enter a mortgage balance.")
-    try:
-        rate=float(clean_strings(rate_str))
-        current_payment=float(clean_strings(current_payment_str))
-        mortgage_balance=float(clean_strings(mortgage_balance_str))
+    if not all(s.strip() for s in (rate_str, current_payment_str, mortgage_balance_str)):
+        st.error("Please fill in all three fields.")
+    else:
+        try:
+            rate = float(clean_strings(rate_str))
+            current_payment = float(clean_strings(current_payment_str))
+            mortgage_balance = float(clean_strings(mortgage_balance_str))
+        except ValueError:
+            st.error("Please enter valid numbers only.")
+            st.stop()
 
-        # Placeholder for secondary message
-        status_placeholder = st.empty()
-        start_time = time.time()
+        with st.spinner("RefiAI agents are analyzing live market data..."):
+            st.session_state.resp = get_recommendation(rate, current_payment, mortgage_balance)
 
-        with st.spinner("Calling agents for a recommendation..."):
-            resp = get_recommendation(rate, current_payment, mortgage_balance)
-            st.session_state.resp = resp
-                
-    except ValueError:
-        st.error("Please enter valid numbers only.")
-        st.stop()
-
-# Render results only if we have them
+# ---- Results ----
 resp = st.session_state.resp
 if resp:
     if "error" in resp:
         st.error(resp["error"])
     else:
-        st.success("Success!")
-        st.subheader("Your Refinance Recommendation: ")
+        st.write("")
+        st.markdown('<div class="refi-eyebrow">Your recommendation</div>', unsafe_allow_html=True)
+        st.markdown("#### Here's the verdict")
 
-        recommendation = html.escape(resp.get("recommendation", "-")).replace("\n", "<br>")
-
-        st.markdown(
-            f"""
-            <div style="
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                font-size: 1.05rem;
-                line-height: 1.6;
-            ">
-                {recommendation}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Effective market rate", fmt_pct(resp.get("market_rate")))
+        c2.metric("New payment (est.)", fmt_money(resp.get("new_payment")))
+        c3.metric("Monthly savings", fmt_money(resp.get("monthly_savings")))
+        c4.metric("Break-even (mo)", fmt_months(resp.get("break_even")))
 
         st.write("")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total number of agentic tools called:", resp.get("num_tool_calls", "-"))
-        with col2:
-            st.caption("The agentic path this workflow took is:")
-            path = resp.get("path", "-")
-            if isinstance(path, list):
-                st.code(" -> ".join(path))
-            else:
-                st.code(str(path))
+        recommendation = html.escape(resp.get("recommendation", "-")).replace("\n", "<br>")
+        with st.container(border=True):
+            st.markdown(f'<div class="refi-reco">{recommendation}</div>', unsafe_allow_html=True)
 
-# RUN: poetry run streamlit run Agentic_Refinance_Tool.py
+        with st.expander("Agent run details"):
+            st.metric("Agentic tool calls", resp.get("num_tool_calls", "-"))
+            st.caption("The path this agentic workflow took:")
+            path = resp.get("path", "-")
+            st.code(" → ".join(path) if isinstance(path, list) else str(path))
+
+# RUN: poetry run streamlit run src/frontend/Agentic_Refinance_Tool.py
