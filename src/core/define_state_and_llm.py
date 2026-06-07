@@ -11,6 +11,9 @@ class State(TypedDict):
     interest_rate: float
     treasury_yield: float
     market_rate: float
+    national_rate: float
+    local_credit_union_rate: float
+    market_rate_source: str
     num_tool_calls: int
     path: List[str]
     current_payment: float
