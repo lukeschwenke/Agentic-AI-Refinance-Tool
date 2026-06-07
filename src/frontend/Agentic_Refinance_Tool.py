@@ -6,7 +6,7 @@ from pathlib import Path
 
 st.set_page_config(page_title="Agentic Refinance Tool", page_icon="🏡")
 
-st.title("Refi with Agentic AI")
+st.title("RefiAI")
 st.markdown("##### Hello! Use this Agentic AI powered refinance tool to determine if now is a good time for you to refinance.")
 
 FRONTEND_DIR = Path(__file__).resolve().parents[0]

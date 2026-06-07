@@ -38,8 +38,8 @@ with col1:
 with col2:
     st.markdown("""#### Overview of Agents:""")
     st.markdown("""
-    ###### Agent #1 - Market Expert Agent \n 
-    A mortgage market intelligence agent that aggregates and summarizes recent mortgage-rate data from multiple online sources to estimate prevailing U.S. mortgage interest rates. This agent invokes a custom tool using Tavily (web access layer for LLMs) to perform web searches and extract current market-rate signals.
+    ###### Agent #1 - Market Expert Agent \n
+    A mortgage market intelligence agent that gathers two rate signals: a national average via a Tavily web search, and a Washington DC-area rate scraped from a local credit union's published rates. It uses the lower of the two as the effective market rate that drives the recommendation.
 
     ###### Agent #2 - Treasury Yield Agent \n
     A financial data agent that retrieves the current U.S. 10-year Treasury yield via the CNBC REST API. The agent evaluates the yield relative to predefined desirability thresholds and provides contextual guidance that informs the final recommendation.
@@ -48,7 +48,7 @@ with col2:
     A financial calculation agent that computes the refinance breakeven period using user-provided and estimated loan data. Inputs include the user’s current monthly principal-and-interest (P&I) payment and an estimated post-refinance P&I payment. The agent calculates monthly savings, estimates closing costs, and determines the breakeven horizon as: Estimated Closing Costs ÷ Monthly Payment Savings
     
     ###### Agent #4 - Finalizer Agent \n
-    A terminal agent that synthesizes outputs from the market-rate, treasury-yield, and breakeven-calculation agents to generate a concise refinance recommendation tailored to the user’s current interest rate and prevailing market conditions.
+    A terminal agent that synthesizes outputs from the market-rate, treasury-yield, and breakeven-calculation agents to generate a concise refinance recommendation. It reports both the national and Washington DC-area rates and states which one (the lower) drove the calculations, tailored to the user’s current rate and prevailing market conditions.
     """)
 
 st.write("""
