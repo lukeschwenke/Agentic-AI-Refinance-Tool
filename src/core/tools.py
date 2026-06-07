@@ -67,6 +67,12 @@ def get_rates_search_tool() -> str:
     return answer
 
 
+LOCAL_CU_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/118.0.5993.89 Safari/537.36"
+)
+
 NATIONAL_RATE_LABEL = "national average"
 LOCAL_RATE_LABEL = "Washington DC area"
 UNAVAILABLE_RATE_LABEL = "unavailable"
@@ -114,6 +120,21 @@ def parse_conforming_30yr_avg(html: str) -> float:
 
     return sum(rates) / len(rates)
 
+
+def get_local_credit_union_30yr_rate() -> float:
+    """Fetch the local credit union's Conforming 30-Year Fixed rate (average of the
+    listed rows). The institution-specific URL is read from LOCAL_CREDIT_UNION_RATES_URL
+    so the source is not hardcoded. Raises ValueError on any failure (missing env var,
+    network error, or parse failure)."""
+    url = os.getenv("LOCAL_CREDIT_UNION_RATES_URL")
+    if not url:
+        raise ValueError("LOCAL_CREDIT_UNION_RATES_URL is not set")
+
+    resp = requests.get(url, headers={"User-Agent": LOCAL_CU_USER_AGENT}, timeout=8)
+    resp.raise_for_status()
+    return parse_conforming_30yr_avg(resp.text)
+
+
 def calculate_estimates_and_breakeven(#interest_rate: float,
                                       current_payment: float,
                                       mortgage_balance: float,
@@ -151,6 +172,11 @@ def get_treasury_10yr_yield_for_agent() -> float:
 def get_rates_search_tool_for_agent() -> str:
     """Get the average mortgage interest rate."""
     return get_rates_search_tool()
+
+@tool
+def get_local_credit_union_30yr_rate_for_agent() -> float:
+    """Get the local credit union's (Washington DC area) average 30-year fixed rate."""
+    return get_local_credit_union_30yr_rate()
 
 
 class CalcArgs(BaseModel):

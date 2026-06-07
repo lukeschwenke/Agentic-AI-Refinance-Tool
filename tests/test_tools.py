@@ -1,3 +1,4 @@
+import os
 import pytest
 from core.tools import (
     get_treasury_10yr_yield,
@@ -5,6 +6,7 @@ from core.tools import (
     calculate_estimates_and_breakeven,
     parse_conforming_30yr_avg,
     consolidate_rates,
+    get_local_credit_union_30yr_rate,
 )
 
 # Minimal, name-free fixture mirroring the real "today's featured rates" markup.
@@ -129,4 +131,15 @@ def test_consolidate_rates_both_failed_is_unavailable():
 @pytest.mark.calculation
 def test_consolidate_rates_tie_prefers_national():
     assert consolidate_rates(6.3, 6.3) == (6.3, "national average")
+
+
+@pytest.mark.local_cu
+def test_live_local_credit_union_30yr_rate():
+    """Live: fetch + parse the local CU conforming 30yr rate. Skips if URL unset."""
+    if not os.getenv("LOCAL_CREDIT_UNION_RATES_URL"):
+        pytest.skip("LOCAL_CREDIT_UNION_RATES_URL not set")
+    val = get_local_credit_union_30yr_rate()
+    print(f"TEST - Local CU 30yr Rate = {val}")
+    assert isinstance(val, float)
+    assert 0.0 < val < 20.0
 
