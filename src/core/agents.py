@@ -10,34 +10,50 @@ tool_nodes = ToolNode([get_treasury_10yr_yield_for_agent,
                        get_local_credit_union_30yr_rate_for_agent,
                        calculate_estimates_and_breakeven_for_agent])
 
-# Agent #1
-def market_expert_agent(state: State) -> dict:
+def _get_national_rate_via_tavily() -> float:
+    """National average via Tavily search + a follow-on LLM numeric extraction.
+    Returns 0.0 on any failure so the source can be ignored downstream."""
     prompt = PromptTemplate(template="""
-                            You are a mortgage market expert. You should summarize some recent articles to get 
-                            an average mortgage interest rate people are seeing right now by 
+                            You are a mortgage market expert. You should summarize some recent articles to get
+                            an average mortgage interest rate people are seeing right now by
                             calling the `get_rates_search_tool_for_agent`.
                             """)
-    prompt_str = prompt.format()
-    resp = llm_with_tools.invoke(prompt_str)
-
-    # Check if LLM wants to call tools
-    if resp.tool_calls:
-        # Execute the call to get_rates_search_tool_for_agent
+    try:
+        resp = llm_with_tools.invoke(prompt.format())
+        if not resp.tool_calls:
+            return 0.0
         tool_result = tool_nodes.invoke({"messages": [resp]})
         message = tool_result["messages"][0].content
-
-        # Extract the single value from the text
         follow_on_prompt = f"""Extract the average mortgage interest rate value from this body of text: {message}
                               You must ONLY return the numerical value up to two decimal places.
                               Example answer: 5.32"""
         updated_resp = llm.invoke(follow_on_prompt)
-        value = float(updated_resp.content)
-        print("===SUCCESSFULLY EXECUTED MARKET RESEARCH AGENT TOOL CALL===")
-    else:
-        value = 0.0
+        return float(updated_resp.content)
+    except Exception:
+        return 0.0
 
-    state["market_rate"] = value
-    state["num_tool_calls"] += 1
+
+# Agent #1
+def market_expert_agent(state: State) -> dict:
+    # Source 1: national average (Tavily search + LLM extraction)
+    national_rate = _get_national_rate_via_tavily()
+
+    # Source 2: local credit union, Washington DC area (deterministic fetch + parse)
+    try:
+        local_rate = get_local_credit_union_30yr_rate()
+    except Exception:
+        local_rate = 0.0
+
+    # Effective market rate = lower of the available (non-zero) sources
+    market_rate, source = consolidate_rates(national_rate, local_rate)
+    if market_rate > 0:
+        print("===SUCCESSFULLY EXECUTED MARKET RESEARCH AGENT TOOL CALL===")
+
+    state["national_rate"] = national_rate
+    state["local_credit_union_rate"] = local_rate
+    state["market_rate"] = market_rate
+    state["market_rate_source"] = source
+    state["num_tool_calls"] += 2
     state["path"].append("market_expert_agent")
     return state
 
