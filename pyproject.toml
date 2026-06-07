@@ -44,6 +44,9 @@ pythonpath = ["src"]
 markers = [
     "integration: tests that hit live endpoints",
     "local_cu: live test for the local credit union rate fetch",
+    "treasury: live test for the 10-year treasury yield fetch",
+    "interest_rate: live test for the Tavily average interest rate",
+    "calculation: offline unit/calculation tests",
 ]
 [dependency-groups]
 dev = [
