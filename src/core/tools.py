@@ -67,6 +67,26 @@ def get_rates_search_tool() -> str:
     return answer
 
 
+NATIONAL_RATE_LABEL = "national average"
+LOCAL_RATE_LABEL = "Washington DC area"
+UNAVAILABLE_RATE_LABEL = "unavailable"
+
+
+def consolidate_rates(national_rate: float, local_rate: float) -> tuple[float, str]:
+    """Choose the effective market rate as the LOWER of the available (non-zero) source
+    rates and return (rate, human-readable source label). Sources that failed are passed
+    in as 0.0 and ignored. If both failed, returns (0.0, 'unavailable'). Ties prefer the
+    national source (listed first)."""
+    candidates = []
+    if national_rate and national_rate > 0:
+        candidates.append((national_rate, NATIONAL_RATE_LABEL))
+    if local_rate and local_rate > 0:
+        candidates.append((local_rate, LOCAL_RATE_LABEL))
+    if not candidates:
+        return 0.0, UNAVAILABLE_RATE_LABEL
+    return min(candidates, key=lambda c: c[0])
+
+
 def parse_conforming_30yr_avg(html: str) -> float:
     """Parse the 'First Mortgage - Conforming Limits' 30-Year Fixed rates from the
     rendered 'today's featured rates' HTML partial and return the average of the listed

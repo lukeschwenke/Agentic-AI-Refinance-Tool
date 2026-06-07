@@ -4,6 +4,7 @@ from core.tools import (
     get_rates_search_tool,
     calculate_estimates_and_breakeven,
     parse_conforming_30yr_avg,
+    consolidate_rates,
 )
 
 # Minimal, name-free fixture mirroring the real "today's featured rates" markup.
@@ -104,4 +105,28 @@ def test_parse_conforming_30yr_avg_raises_when_product_absent():
     html = '<div class="product-type"> First Mortgage - Conforming Limits </div><div>nothing</div>'
     with pytest.raises(ValueError):
         parse_conforming_30yr_avg(html)
+
+
+@pytest.mark.calculation
+def test_consolidate_rates_picks_lower_when_both_present():
+    assert consolidate_rates(6.55, 6.3125) == (6.3125, "Washington DC area")
+    assert consolidate_rates(6.10, 6.3125) == (6.10, "national average")
+
+
+@pytest.mark.calculation
+def test_consolidate_rates_ignores_failed_source():
+    # local failed (0.0) -> use national
+    assert consolidate_rates(6.55, 0.0) == (6.55, "national average")
+    # national failed (0.0) -> use local
+    assert consolidate_rates(0.0, 6.3125) == (6.3125, "Washington DC area")
+
+
+@pytest.mark.calculation
+def test_consolidate_rates_both_failed_is_unavailable():
+    assert consolidate_rates(0.0, 0.0) == (0.0, "unavailable")
+
+
+@pytest.mark.calculation
+def test_consolidate_rates_tie_prefers_national():
+    assert consolidate_rates(6.3, 6.3) == (6.3, "national average")
 
