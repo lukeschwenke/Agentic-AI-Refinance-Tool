@@ -4,10 +4,10 @@ import time
 import html
 from pathlib import Path
 
-st.set_page_config(page_title="Agentic Refinance Tool", page_icon="🏡")
+st.set_page_config(page_title="RefiAI", page_icon="🏡")
 
 st.title("RefiAI")
-st.markdown("##### Hello! Use this Agentic AI powered refinance tool to determine if now is a good time for you to refinance.")
+st.markdown("##### Hello! Use RefiAI, an Agentic AI–powered refinance tool, to determine if now is a good time for you to refinance.")
 
 FRONTEND_DIR = Path(__file__).resolve().parents[0]
 IMG_PATH = FRONTEND_DIR / "images" / "landing_page_v1.png"
