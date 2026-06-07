@@ -148,14 +148,17 @@ def finalizer_agent(state: State) -> dict:
     PROMPT_PATH = "src/prompts/finalizer_prompt.txt"
     FINALIZER_PROMPT = Path(PROMPT_PATH).read_text()
     
-    prompt = PromptTemplate(input_variables=["interest_rate", 
+    prompt = PromptTemplate(input_variables=["interest_rate",
                                              "treasury_yield",
                                              "market_rate",
                                              "current_payment",
                                              "monthly_savings",
                                              "break_even",
                                              "new_payment",
-                                             "mortgage_balance"],
+                                             "mortgage_balance",
+                                             "national_rate",
+                                             "local_credit_union_rate",
+                                             "market_rate_source"],
                               template=FINALIZER_PROMPT)
                             # template="""You are a mortgage refinance expert who should make the final recommendation 
                             # to the user if they should refinance or not. You should make your recommendation within 5-8
@@ -205,6 +208,9 @@ def finalizer_agent(state: State) -> dict:
         monthly_savings=state['monthly_savings'],
         break_even=state['break_even'],
         new_payment=state['new_payment'],
+        national_rate=state['national_rate'],
+        local_credit_union_rate=state['local_credit_union_rate'],
+        market_rate_source=state['market_rate_source'],
     )
 
     response = llm_finalizer.invoke(final_prompt)

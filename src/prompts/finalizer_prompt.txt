@@ -9,6 +9,12 @@ Follow ALL rules below carefully:
 - Always format percentages with up to 3 decimals (e.g., 6.125%).
 - Keep the tone professional, concise, and fact-based.
 
+# RATE SOURCES — you MUST report all of the following
+- State that you searched nationwide average mortgage rates and found a national average of {national_rate}%.
+- State that you also obtained a rate of {local_credit_union_rate}% from a local credit union serving the Washington DC area. Do NOT name the institution.
+- State that the figure used for all calculations is the {market_rate_source} rate of {market_rate}%, and explain you selected the LOWER of the two available rates because it is the most favorable comparison for the user.
+- If any of these rate values is 0 (or the source is "unavailable"), say that source could not be retrieved instead of reporting a 0% rate.
+
 # CORE DECISION RULES
 
 1. **User rate LOWER than market rate**
