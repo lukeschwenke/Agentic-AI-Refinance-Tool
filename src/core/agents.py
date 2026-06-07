@@ -5,8 +5,9 @@ from core.tools import *
 from langgraph.prebuilt import ToolNode
 from pathlib import Path
 
-tool_nodes = ToolNode([get_treasury_10yr_yield_for_agent, 
+tool_nodes = ToolNode([get_treasury_10yr_yield_for_agent,
                        get_rates_search_tool_for_agent,
+                       get_local_credit_union_30yr_rate_for_agent,
                        calculate_estimates_and_breakeven_for_agent])
 
 # Agent #1

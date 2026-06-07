@@ -36,4 +36,5 @@ llm_finalizer = ChatOpenAI(model=os.getenv("OPENAI_FINALIZER_MODEL_NAME", "gpt-5
 
 llm_with_tools = llm.bind_tools([get_treasury_10yr_yield_for_agent,
                                  get_rates_search_tool_for_agent,
+                                 get_local_credit_union_30yr_rate_for_agent,
                                  calculate_estimates_and_breakeven_for_agent])
