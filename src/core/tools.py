@@ -1,3 +1,4 @@
+import re
 import requests
 from langchain_core.tools import tool
 from tavily import TavilyClient
@@ -65,9 +66,37 @@ def get_rates_search_tool() -> str:
     answer = response["answer"]
     return answer
 
+
+def parse_conforming_30yr_avg(html: str) -> float:
+    """Parse the 'First Mortgage - Conforming Limits' 30-Year Fixed rates from the
+    rendered 'today's featured rates' HTML partial and return the average of the listed
+    Rate-column values (the published rows differ only by points). Raises ValueError if
+    the expected section/product/rows are not found."""
+    section_start = html.find("First Mortgage - Conforming Limits")
+    if section_start == -1:
+        raise ValueError("Conforming Limits section not found in rates HTML")
+    section = html[section_start:]
+
+    product_start = section.find("30 Year Fixed Rate")
+    if product_start == -1:
+        raise ValueError("30 Year Fixed Rate product not found in Conforming section")
+    block = section[product_start:]
+
+    # End the block at the next product so other products' rows are excluded.
+    next_product = re.search(r"class=['\"]tfr-product['\"]", block)
+    if next_product:
+        block = block[: next_product.start()]
+
+    # Rate-column values are exposed as aria-label="Rate X.XXX%".
+    rates = [float(m) for m in re.findall(r"aria-label=['\"]Rate (\d+(?:\.\d+)?)%['\"]", block)]
+    if not rates:
+        raise ValueError("No Rate values parsed from Conforming 30-Year block")
+
+    return sum(rates) / len(rates)
+
 def calculate_estimates_and_breakeven(#interest_rate: float,
-                                      current_payment: float, 
-                                      mortgage_balance: float, 
+                                      current_payment: float,
+                                      mortgage_balance: float,
                                       market_rate: float) -> tuple[float, float]:
     """Calculate the new monthly mortgage payment and the break-even period on the closing costs"""
     ### New Payment Calculation ###

@@ -1,5 +1,43 @@
 import pytest
-from core.tools import get_treasury_10yr_yield, get_rates_search_tool, calculate_estimates_and_breakeven
+from core.tools import (
+    get_treasury_10yr_yield,
+    get_rates_search_tool,
+    calculate_estimates_and_breakeven,
+    parse_conforming_30yr_avg,
+)
+
+# Minimal, name-free fixture mirroring the real "today's featured rates" markup.
+# Includes a following 15-Year product to prove the parser stops at the next product.
+CONFORMING_RATES_HTML_FIXTURE = """
+<div class="product-type"> First Mortgage - Conforming Limits </div>
+<div class="product">
+  <div class="link">
+    <a role="button" class='tfr-product' data-productid="75507">30 Year Fixed Rate</a>
+  </div>
+  <div class="rates" role="table">
+    <div role="rowgroup"><div class="rate-row" role="row">
+      <div role="cell"><a aria-label="Rate 6.250%" class="tfr-rate-detail">6.250%</a></div>
+      <div role="cell"><a aria-label="APR 6.391%" class="tfr-rate-detail">6.391%</a></div>
+      <div role="cell" aria-label="Points 1.000%">1.000%</div>
+    </div></div>
+    <div role="rowgroup"><div class="rate-row" role="row">
+      <div role="cell"><a aria-label="Rate 6.375%" class="tfr-rate-detail">6.375%</a></div>
+      <div role="cell"><a aria-label="APR 6.433%" class="tfr-rate-detail">6.433%</a></div>
+      <div role="cell" aria-label="Points 0.125%">0.125%</div>
+    </div></div>
+  </div>
+</div>
+<div class="product">
+  <div class="link">
+    <a role="button" class='tfr-product' data-productid="75509">15 Year Fixed Rate</a>
+  </div>
+  <div class="rates" role="table">
+    <div role="rowgroup"><div class="rate-row" role="row">
+      <div role="cell"><a aria-label="Rate 5.750%" class="tfr-rate-detail">5.750%</a></div>
+    </div></div>
+  </div>
+</div>
+"""
 
 @pytest.mark.treasury
 def test_live_us10y_range():
@@ -47,3 +85,23 @@ def test_calulcator_rool():
 # Run tests with
 # poetry run pytest test_tools.py -m treasury -s
 # poetry run pytest test_tools.py -m interest_rate -s
+
+@pytest.mark.calculation
+def test_parse_conforming_30yr_avg_returns_average_of_two_rows():
+    """Averages the two Conforming 30yr Rate rows and ignores the 15yr product."""
+    result = parse_conforming_30yr_avg(CONFORMING_RATES_HTML_FIXTURE)
+    assert result == 6.3125
+
+@pytest.mark.calculation
+def test_parse_conforming_30yr_avg_raises_on_missing_section():
+    """Raises ValueError when the Conforming section is absent."""
+    with pytest.raises(ValueError):
+        parse_conforming_30yr_avg("<html><body>no rates here</body></html>")
+
+@pytest.mark.calculation
+def test_parse_conforming_30yr_avg_raises_when_product_absent():
+    """Raises ValueError when the Conforming section exists but has no 30yr product."""
+    html = '<div class="product-type"> First Mortgage - Conforming Limits </div><div>nothing</div>'
+    with pytest.raises(ValueError):
+        parse_conforming_30yr_avg(html)
+
