@@ -36,7 +36,7 @@ Note: `tests/test_tools.py` makes **live** calls to CNBC and Tavily, so it needs
 
 ## Environment
 
-A `.env` file (gitignored) is required and read by both the app and Docker (`--env-file .env`). Keys used in code: `OPENAI_API_KEY`, `OPENAI_MODEL_NAME`, `TAVILY_API_KEY`, `LOG_TABLE` (DynamoDB table), `AWS_REGION`, and the client-side `API_BASE_URL` / `API_PORT` / `API_PATH`.
+A `.env` file (gitignored) is required and read by both the app and Docker (`--env-file .env`). Keys used in code: `OPENAI_API_KEY`, `OPENAI_MODEL_NAME`, `TAVILY_API_KEY`, `LOG_TABLE` (DynamoDB table), `AWS_REGION`, `LOCAL_CREDIT_UNION_RATES_URL` (the local credit union "today's featured rates" partial endpoint; the DC-area rate source degrades to unavailable if unset), and the client-side `API_BASE_URL` / `API_PORT` / `API_PATH`.
 
 ## Architecture
 
