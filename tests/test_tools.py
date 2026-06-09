@@ -2,6 +2,8 @@ import os
 import pytest
 from core.tools import (
     get_treasury_10yr_yield,
+    get_treasury_10yr_quote,
+    classify_rate_timing,
     get_rates_search_tool,
     calculate_estimates_and_breakeven,
     parse_conforming_30yr_avg,
@@ -142,4 +144,60 @@ def test_live_local_credit_union_30yr_rate():
     print(f"TEST - Local CU 30yr Rate = {val}")
     assert isinstance(val, float)
     assert 0.0 < val < 20.0
+
+
+# ---- Treasury timing classifier (pure, offline) ----
+
+@pytest.mark.calculation
+def test_classify_rate_timing_range_labels():
+    favorable = classify_rate_timing(4.0, yr_high=4.7, yr_low=3.9, prev_close=4.0, mortgage_rate=6.0)
+    neutral = classify_rate_timing(4.3, yr_high=4.7, yr_low=3.9, prev_close=4.3, mortgage_rate=6.0)
+    elevated = classify_rate_timing(4.54, yr_high=4.69, yr_low=3.93, prev_close=4.54, mortgage_rate=6.5)
+    assert favorable["range_label"] == "favorable"   # ~13th percentile
+    assert neutral["range_label"] == "neutral"        # 50th percentile
+    assert elevated["range_label"] == "elevated"      # ~80th percentile
+
+
+@pytest.mark.calculation
+def test_classify_rate_timing_range_position_value():
+    r = classify_rate_timing(4.54, yr_high=4.69, yr_low=3.93, prev_close=4.50, mortgage_rate=6.5)
+    assert r["range_position"] == pytest.approx(80.3, abs=0.5)
+
+
+@pytest.mark.calculation
+def test_classify_rate_timing_spread_labels():
+    assert classify_rate_timing(4.0, 4.7, 3.9, 4.0, mortgage_rate=6.5)["spread_label"] == "wide"    # 2.50
+    assert classify_rate_timing(4.54, 4.69, 3.93, 4.54, mortgage_rate=6.5)["spread_label"] == "normal"  # 1.96
+    assert classify_rate_timing(4.5, 4.7, 3.9, 4.5, mortgage_rate=5.7)["spread_label"] == "tight"   # 1.20
+
+
+@pytest.mark.calculation
+def test_classify_rate_timing_direction():
+    assert classify_rate_timing(4.55, 4.7, 3.9, 4.50, 6.5)["direction"] == "rising"
+    assert classify_rate_timing(4.45, 4.7, 3.9, 4.50, 6.5)["direction"] == "falling"
+    assert classify_rate_timing(4.501, 4.7, 3.9, 4.50, 6.5)["direction"] == "flat"
+
+
+@pytest.mark.calculation
+def test_classify_rate_timing_unavailable_edges():
+    # Equal hi/lo -> range unavailable; spread still computed.
+    r = classify_rate_timing(4.5, yr_high=4.5, yr_low=4.5, prev_close=4.5, mortgage_rate=6.5)
+    assert r["range_label"] == "unavailable"
+    assert r["range_position"] is None
+    assert r["spread_label"] == "normal"
+    # Missing mortgage rate -> spread unavailable; range still computed.
+    r2 = classify_rate_timing(4.0, 4.7, 3.9, 4.0, mortgage_rate=0.0)
+    assert r2["spread_label"] == "unavailable"
+    assert r2["spread"] is None
+    assert r2["range_label"] == "favorable"
+
+
+@pytest.mark.treasury
+def test_live_treasury_10yr_quote():
+    """Live: CNBC quote returns last within its 52-week low..high band."""
+    q = get_treasury_10yr_quote()
+    print(f"TEST - 10yr quote = {q}")
+    assert 0.0 < q["last"] < 20.0
+    if q["yr_high"] is not None and q["yr_low"] is not None:
+        assert 0.0 < q["yr_low"] <= q["last"] <= q["yr_high"] < 20.0
 

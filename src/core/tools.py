@@ -9,42 +9,132 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+TREASURY_QUOTE_URL = "https://quote.cnbc.com/quote-html-webservice/quote.htm"
+TREASURY_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/118.0.5993.89 Safari/537.36"
+)
+
+# --- Treasury timing thresholds (tunable; see the treasury-timing spec) ---
+NORMAL_SPREAD = 1.75          # long-run mortgage-minus-10yr spread (percentage points)
+SPREAD_BAND = 0.35            # normal band = NORMAL_SPREAD +/- this
+RANGE_FAVORABLE_MAX = 33      # range_position < 33 -> favorable (near 12-mo low)
+RANGE_ELEVATED_MIN = 66       # range_position > 66 -> elevated (near 12-mo high)
+DIRECTION_FLAT_BAND = 0.03    # |last - prev_close| < this -> flat
+
+TIMING_FAVORABLE = "favorable"
+TIMING_NEUTRAL = "neutral"
+TIMING_ELEVATED = "elevated"
+SPREAD_WIDE = "wide"
+SPREAD_NORMAL = "normal"
+SPREAD_TIGHT = "tight"
+UNAVAILABLE = "unavailable"
+
+
+def _to_float(value) -> float:
+    """Parse a CNBC numeric string (which may carry a trailing %) into a float."""
+    return float(str(value).strip().rstrip("%"))
+
+
+def _is_pos(v) -> bool:
+    return isinstance(v, (int, float)) and v > 0
+
+
 #@tool
-def get_treasury_10yr_yield() -> float:
-    """"
-    Gets the 10 year treasury yield value.
+def get_treasury_10yr_quote() -> dict:
+    """Fetch the 10-year Treasury quote from CNBC.
+
+    Returns {"last", "yr_high", "yr_low", "prev_close"} as floats. `last` is
+    required (raises ValueError if the payload is malformed); the 52-week high/low
+    and previous close degrade to None if absent, so the plain yield fetch and the
+    timing classifier can still work with partial data.
     """
-
-    url = "https://quote.cnbc.com/quote-html-webservice/quote.htm"
-
-    headers = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/118.0.5993.89 Safari/537.36"
-    )
-    }
-
     params = {
-        "noform": "1",
-        "partnerId": "2",
-        "fund": "1",
-        "exthrs": "0",
-        "output": "json",
-        "symbols": "US10Y"
+        "noform": "1", "partnerId": "2", "fund": "1", "exthrs": "0",
+        "output": "json", "symbols": "US10Y",
     }
-
-    resp = requests.get(url, params=params, headers=headers, timeout=8)
+    resp = requests.get(TREASURY_QUOTE_URL, params=params,
+                        headers={"User-Agent": TREASURY_USER_AGENT}, timeout=8)
     resp.raise_for_status()
     data = resp.json()
 
     try:
-        quotes = data["QuickQuoteResult"]["QuickQuote"]
-        value = quotes[0]["last"]
-        str_value = str(value).strip().rstrip("%")
-        return float(str_value)
+        quote = data["QuickQuoteResult"]["QuickQuote"][0]
+        last = _to_float(quote["last"])
     except Exception as e:
         raise ValueError(f"Unexpected CNBC payload shape or symbol missing: {e}") from e
+
+    fundamentals = quote.get("FundamentalData") or {}
+
+    def _opt(d, key):
+        try:
+            return _to_float(d[key])
+        except Exception:
+            return None
+
+    return {
+        "last": last,
+        "yr_high": _opt(fundamentals, "yrhiprice"),
+        "yr_low": _opt(fundamentals, "yrloprice"),
+        "prev_close": _opt(quote, "previous_day_closing"),
+    }
+
+
+#@tool
+def get_treasury_10yr_yield() -> float:
+    """Gets the 10 year treasury yield value (the latest yield)."""
+    return get_treasury_10yr_quote()["last"]
+
+
+def classify_rate_timing(treasury_yield, yr_high, yr_low, prev_close, mortgage_rate) -> dict:
+    """Turn the raw treasury + mortgage numbers into timing/context signals.
+
+    Returns: range_position (0-100), range_label (favorable/neutral/elevated),
+    direction (rising/falling/flat), spread (mortgage - 10yr), and spread_label
+    (wide/normal/tight). Any input that's missing/invalid degrades the affected
+    label to "unavailable" (and its number to None) instead of raising.
+    """
+    result = {
+        "range_position": None,
+        "range_label": UNAVAILABLE,
+        "direction": UNAVAILABLE,
+        "spread": None,
+        "spread_label": UNAVAILABLE,
+    }
+
+    # Where the yield sits within its trailing 52-week high/low range.
+    if _is_pos(treasury_yield) and _is_pos(yr_high) and _is_pos(yr_low) and yr_high > yr_low:
+        pos = 100.0 * (treasury_yield - yr_low) / (yr_high - yr_low)
+        pos = max(0.0, min(100.0, pos))
+        result["range_position"] = round(pos, 1)
+        if pos < RANGE_FAVORABLE_MAX:
+            result["range_label"] = TIMING_FAVORABLE
+        elif pos > RANGE_ELEVATED_MIN:
+            result["range_label"] = TIMING_ELEVATED
+        else:
+            result["range_label"] = TIMING_NEUTRAL
+
+    # Day-over-day direction.
+    if _is_pos(treasury_yield) and _is_pos(prev_close):
+        delta = treasury_yield - prev_close
+        if abs(delta) < DIRECTION_FLAT_BAND:
+            result["direction"] = "flat"
+        else:
+            result["direction"] = "rising" if delta > 0 else "falling"
+
+    # Mortgage-minus-Treasury spread vs the long-run norm.
+    if _is_pos(treasury_yield) and _is_pos(mortgage_rate):
+        spread = round(mortgage_rate - treasury_yield, 2)
+        result["spread"] = spread
+        if spread > NORMAL_SPREAD + SPREAD_BAND:
+            result["spread_label"] = SPREAD_WIDE
+        elif spread < NORMAL_SPREAD - SPREAD_BAND:
+            result["spread_label"] = SPREAD_TIGHT
+        else:
+            result["spread_label"] = SPREAD_NORMAL
+
+    return result
 
 #@tool
 def get_rates_search_tool() -> str:

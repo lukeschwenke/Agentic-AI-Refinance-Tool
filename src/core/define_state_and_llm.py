@@ -10,6 +10,13 @@ load_dotenv()
 class State(TypedDict):
     interest_rate: float
     treasury_yield: float
+    treasury_yr_low: float | None
+    treasury_yr_high: float | None
+    treasury_range_position: float | None
+    treasury_timing_label: str
+    treasury_direction: str
+    mortgage_treasury_spread: float | None
+    spread_label: str
     market_rate: float
     national_rate: float
     local_credit_union_rate: float

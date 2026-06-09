@@ -59,24 +59,36 @@ def market_expert_agent(state: State) -> dict:
 
 # Agent #2
 def treasury_yield_agent(state: State) -> dict:
-    """Agent gets the latest news articles and summarizes how mortgage rates are at the moment.
-    It will also review the 10 year treasury yield rate and see if it's good."""
-    prompt = PromptTemplate(template="""You are an expert on treasury yields. You should review the 
-                            current 10 Year Treasury Yield rate by calling the `get_treasury_10yr_yield_for_agent` 
-                            tool to get the current 10-year Treasury yield value.
-                            """)
-    resp = llm_with_tools.invoke(prompt.format())
-    
-    # Check if LLM wants to call tools
-    if resp.tool_calls:
-        # This knows to execute the 10 year treasury function
-        tool_result = tool_nodes.invoke({"messages": [resp]})
-        value = float(tool_result["messages"][0].content)
+    """Fetches the 10-year Treasury quote (yield + 52-week high/low + prior close) and
+    derives regime-relative timing signals: where the yield sits within its trailing
+    52-week range, the day-over-day direction, and the mortgage-minus-Treasury spread
+    vs the long-run norm. These are stored as timing/context for the finalizer, not as
+    a pass/fail gate. Runs only in the CONTINUE path, so a mortgage rate is available."""
+    # Spread benchmark: prefer the national average, fall back to the effective rate.
+    mortgage_rate = state.get("national_rate") or state.get("market_rate") or 0.0
+
+    try:
+        quote = get_treasury_10yr_quote()
         print("===SUCCESSFULLY EXECUTED TREASURY YIELD AGENT TOOL CALL===")
-    else:
-        value = 0.0
-    
-    state["treasury_yield"] = value
+    except Exception:
+        quote = {"last": 0.0, "yr_high": None, "yr_low": None, "prev_close": None}
+
+    timing = classify_rate_timing(
+        treasury_yield=quote["last"],
+        yr_high=quote["yr_high"],
+        yr_low=quote["yr_low"],
+        prev_close=quote["prev_close"],
+        mortgage_rate=mortgage_rate,
+    )
+
+    state["treasury_yield"] = quote["last"]
+    state["treasury_yr_low"] = quote["yr_low"]
+    state["treasury_yr_high"] = quote["yr_high"]
+    state["treasury_range_position"] = timing["range_position"]
+    state["treasury_timing_label"] = timing["range_label"]
+    state["treasury_direction"] = timing["direction"]
+    state["mortgage_treasury_spread"] = timing["spread"]
+    state["spread_label"] = timing["spread_label"]
     state["num_tool_calls"] = state.get("num_tool_calls", 0) + 1
     state["path"].append("treasury_yield_agent")
     return state
@@ -158,7 +170,14 @@ def finalizer_agent(state: State) -> dict:
                                              "mortgage_balance",
                                              "national_rate",
                                              "local_credit_union_rate",
-                                             "market_rate_source"],
+                                             "market_rate_source",
+                                             "treasury_yr_low",
+                                             "treasury_yr_high",
+                                             "treasury_range_position",
+                                             "treasury_timing_label",
+                                             "treasury_direction",
+                                             "mortgage_treasury_spread",
+                                             "spread_label"],
                               template=FINALIZER_PROMPT)
                             # template="""You are a mortgage refinance expert who should make the final recommendation 
                             # to the user if they should refinance or not. You should make your recommendation within 5-8
@@ -211,6 +230,13 @@ def finalizer_agent(state: State) -> dict:
         national_rate=state['national_rate'],
         local_credit_union_rate=state['local_credit_union_rate'],
         market_rate_source=state['market_rate_source'],
+        treasury_yr_low=state['treasury_yr_low'],
+        treasury_yr_high=state['treasury_yr_high'],
+        treasury_range_position=state['treasury_range_position'],
+        treasury_timing_label=state['treasury_timing_label'],
+        treasury_direction=state['treasury_direction'],
+        mortgage_treasury_spread=state['mortgage_treasury_spread'],
+        spread_label=state['spread_label'],
     )
 
     response = llm_finalizer.invoke(final_prompt)

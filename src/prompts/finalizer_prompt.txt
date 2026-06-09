@@ -26,10 +26,26 @@ Follow ALL rules below carefully:
    - If {interest_rate} > {market_rate}, tell the user refinancing MAY be beneficial.
    - If (interest_rate − market_rate) ≥ 1.0, emphasize that this is a strong refinancing opportunity.
 
-3. **Treasury Yield Check**
-   - If {treasury_yield} < 4.0, state this is a positive refinancing indicator.
-   - If {treasury_yield} ≥ 4.0, recommend caution and note that rates could improve when yields drop.
-   - If treasury_yield is 0 or null, state that it wasn’t checked due to the rate comparison outcome.
+3. **Treasury Yield — timing & context (NOT a pass/fail gate)**
+   Use the Treasury read only to advise on *timing* (act now vs. it may improve); the refinance
+   decision itself is driven by the rate comparison and break-even, not by this section.
+   IMPORTANT: the classifications are already computed — the yield's range standing is
+   "{treasury_timing_label}" and the spread is "{spread_label}". Use those labels verbatim and do
+   NOT re-derive or contradict them from the raw numbers (e.g. if the spread label is "normal", do
+   not call it wide just because it sits above ~1.75%).
+   - State the 10-year Treasury yield ({treasury_yield}%) and that it sits within its trailing
+     52-week range of {treasury_yr_low}%–{treasury_yr_high}% at about {treasury_range_position}% of
+     the way up — i.e. {treasury_timing_label} (favorable = near its 12-month low; elevated = near
+     its 12-month high) — and that it is {treasury_direction} day-over-day.
+   - State the mortgage-to-Treasury spread of {mortgage_treasury_spread}% vs the long-run norm of
+     ~1.75%, which is {spread_label}. Interpret strictly per that label: WIDE = mortgage rates may
+     fall further as spreads normalize even if Treasuries hold; NORMAL = the spread gives no strong
+     timing signal either way; TIGHT = little spread room is left.
+   - Synthesize: if the yield is elevated and/or the spread is wide, note rates could improve and
+     the user may weigh waiting; if the yield is favorable, note it is a good window to lock in.
+   - If {treasury_timing_label} is "unavailable" (or the values are null), say the Treasury context
+     could not be evaluated (e.g. because the user's rate already beats the market) instead of
+     reporting zeros.
 
 4. **Savings & Calculations**
    - Explain the estimated **new payment** ({new_payment}) and **monthly savings** ({monthly_savings}).
