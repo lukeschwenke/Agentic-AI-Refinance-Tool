@@ -8,7 +8,7 @@ import logging
 import traceback
 from datetime import datetime, timezone
 import os, json, time, uuid
-from core.db_logging import log_event
+from core.db_logging import log_event, increment_ip_usage, DAILY_IP_LIMIT
 from zoneinfo import ZoneInfo
 load_dotenv()
 
@@ -21,6 +21,7 @@ class RefiAdviceRequest(BaseModel):
     interest_rate: float = Field(..., gt=0, description="User's current mortgage interest rate (e.g., 7.125)")
     current_payment: float = Field(..., gt=0, description="User's current monthly mortgage pamyne (principal and interest only, e.g., $3,200)")
     mortgage_balance: float = Field(..., gt=0, description="User's remaining balance on mortgage (e.g., $500,000)")
+    client_ip: Optional[str] = Field(None, description="End-user IP forwarded by the UI; used for the daily demo rate limit")
 
 class RefiAdviceResponse(BaseModel):
     recommendation: str
@@ -48,6 +49,24 @@ def extract_text(value) -> str:
 # ----- Routes -----
 @app.post("/refinance_agent/recommendation", response_model=RefiAdviceResponse)
 def return_advice_recommendation(payload: RefiAdviceRequest):
+    # Daily per-IP demo limit. Checked outside the try below so the 429
+    # isn't swallowed and re-raised as a 500. If DynamoDB is unreachable
+    # we fail open rather than lock visitors out.
+    if payload.client_ip:
+        try:
+            used_today = increment_ip_usage(payload.client_ip)
+        except Exception:
+            logger.exception("Rate-limit check failed; allowing request.")
+            used_today = None
+        if used_today is not None and used_today > DAILY_IP_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Demo limit reached: this demo allows {DAILY_IP_LIMIT} "
+                    "recommendations per visitor per day. Please come back tomorrow!"
+                ),
+            )
+
     try:
         initial_state = {
             "interest_rate": payload.interest_rate,
@@ -87,7 +106,8 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
                   current_payment=payload.current_payment,
                   mortgage_balance=payload.mortgage_balance,
                   timestamp=datetime.now(ZoneInfo("US/Eastern")).isoformat(),
-                  primary_key=str(uuid.uuid4()))
+                  primary_key=str(uuid.uuid4()),
+                  ip=payload.client_ip)
             
         except Exception:
             logger.exception("DynamoDB logging failed.")

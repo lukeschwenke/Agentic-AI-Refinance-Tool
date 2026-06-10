@@ -1,13 +1,20 @@
 import streamlit as st
 import html
 from ui import apply_theme, hero, fmt_pct, fmt_money, fmt_months
-from auth import require_auth
 
 st.set_page_config(page_title="RefiAI", page_icon="🏡")
-require_auth()
 apply_theme()
 
 from client import get_recommendation
+
+
+def client_ip():
+    """Visitor IP for the API's daily demo limit. Behind the Caddy proxy the
+    direct peer is Caddy itself, so prefer the X-Forwarded-For header."""
+    xff = st.context.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()
+    return st.context.ip_address
 
 hero(
     title_html="Refi<span>AI</span>",
@@ -55,7 +62,9 @@ if run:
             st.stop()
 
         with st.spinner("RefiAI agents are analyzing live market data..."):
-            st.session_state.resp = get_recommendation(rate, current_payment, mortgage_balance)
+            st.session_state.resp = get_recommendation(
+                rate, current_payment, mortgage_balance, client_ip=client_ip()
+            )
 
 # ---- Results ----
 resp = st.session_state.resp

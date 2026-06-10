@@ -23,18 +23,24 @@ else:
 
 def get_recommendation(interest_rate: float,
                        current_payment: float,
-                       mortgage_balance: float) -> RefiAdviceResponse:
+                       mortgage_balance: float,
+                       client_ip: Optional[str] = None) -> RefiAdviceResponse:
 
     data_payload = RefiAdviceRequest(interest_rate=interest_rate,
                                      current_payment=current_payment,
-                                     mortgage_balance=mortgage_balance).model_dump()
+                                     mortgage_balance=mortgage_balance,
+                                     client_ip=client_ip).model_dump()
 
     try:
         response = requests.post(FULL_API_URL, json=data_payload, timeout=90)
         response.raise_for_status()
         return response.json()
     except requests.HTTPError as e:
-        return {"error": f"HTTP {response.status_code}: {response.text if response is not None else e}"}
+        try:
+            detail = response.json().get("detail")
+        except Exception:
+            detail = None
+        return {"error": detail or f"HTTP {response.status_code}: {response.text if response is not None else e}"}
     except Exception as e:
         return {"error": str(e)}
     
