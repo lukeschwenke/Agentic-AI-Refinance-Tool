@@ -18,6 +18,11 @@ NETWORK_NAME = refi_network
 PROD_API_CONTAINER = agentic_refi_api
 UI_CONTAINER = agentic_refi_ui
 UI_PORT = 3000
+PROXY_CONTAINER = agentic_refi_proxy
+# Route53 record pointing at this EC2. Caddy obtains/renews the free
+# Let's Encrypt certificate for it automatically — ports 80 and 443
+# must be open in the instance's security group.
+DOMAIN = refi-agentic-ai.lukeschwenke.com
 
 build:
 	docker buildx build \
@@ -84,11 +89,17 @@ login-ec2-and-pull:
 		 && docker network create $(NETWORK_NAME) 2>/dev/null || true \
 		 && docker rm -f $(PROD_API_CONTAINER) 2>/dev/null; true \
 		 && docker rm -f $(UI_CONTAINER) 2>/dev/null; true \
+		 && docker rm -f $(PROXY_CONTAINER) 2>/dev/null; true \
 		 && docker run -d --name $(PROD_API_CONTAINER) --network $(NETWORK_NAME) --env-file ~/$(EC2_DIR)/.env -p $(PORT):$(PORT) $(ECR_URI):$(IMAGE_TAG) \
 		 && docker run -d --name $(UI_CONTAINER) --network $(NETWORK_NAME) --env-file ~/$(EC2_DIR)/.env \
 		    -e API_BASE_URL=http://$(PROD_API_CONTAINER) -e API_PORT=$(PORT) \
-		    -p $(UI_PORT):$(UI_PORT) $(ECR_URI):$(IMAGE_TAG) \
-		    streamlit run src/frontend/Agentic_Refinance_Tool.py --server.address=0.0.0.0 --server.port=$(UI_PORT)"
+		    $(ECR_URI):$(IMAGE_TAG) \
+		    streamlit run src/frontend/Agentic_Refinance_Tool.py --server.address=0.0.0.0 --server.port=$(UI_PORT) \
+		 && docker run -d --name $(PROXY_CONTAINER) --network $(NETWORK_NAME) \
+		    -p 80:80 -p 443:443 \
+		    -v caddy_data:/data -v caddy_config:/config \
+		    caddy:2 \
+		    caddy reverse-proxy --from $(DOMAIN) --to $(UI_CONTAINER):$(UI_PORT)"
 	rm -f /tmp/ec2_deploy_key /tmp/ec2_deploy_key.pub
 
 full-deploy-prod: push-ecr login-ec2-and-pull
