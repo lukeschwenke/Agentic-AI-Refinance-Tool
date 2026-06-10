@@ -1,8 +1,10 @@
 import streamlit as st
 from pathlib import Path
 from ui import apply_theme, page_header
+from auth import require_auth
 
 st.set_page_config(page_title="Project Inspiration", page_icon="🏡", layout="wide")
+require_auth()
 apply_theme()
 
 page_header(

@@ -2,8 +2,10 @@ import streamlit as st
 from client import get_recommendation
 import html
 from ui import apply_theme, hero, fmt_pct, fmt_money, fmt_months
+from auth import require_auth
 
 st.set_page_config(page_title="RefiAI", page_icon="🏡")
+require_auth()
 apply_theme()
 
 hero(
