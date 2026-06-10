@@ -88,6 +88,9 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
 h1, h2, h3, h4 { letter-spacing: -0.025em !important; font-weight: 700 !important; }
 
 /* ---- App background: deep navy with emerald aurora glows ---- */
+[data-testid="stAppViewContainer"], [data-testid="stSidebar"] {
+  color: var(--refi-text);
+}
 [data-testid="stAppViewContainer"] {
   background:
     radial-gradient(1200px 600px at 12% -8%, rgba(16,185,129,0.13), transparent 60%),
@@ -103,28 +106,48 @@ h1, h2, h3, h4 { letter-spacing: -0.025em !important; font-weight: 700 !importan
   border-right: 1px solid var(--refi-border);
   backdrop-filter: blur(14px);
 }
-[data-testid="stSidebarNav"] a {
+/* Explicit high-contrast nav link colour so it stays legible even if the dark
+   theme config never loads (e.g. browser falls back to a light base). */
+[data-testid="stSidebarNav"] a,
+[data-testid="stSidebarNav"] a span {
   border-radius: 10px;
+  color: #cdd9ea !important;
   transition: background .15s ease, color .15s ease;
 }
-[data-testid="stSidebarNav"] a:hover { background: rgba(16,185,129,0.10); }
-[data-testid="stSidebarNav"] a[aria-current="page"] {
+[data-testid="stSidebarNav"] a:hover,
+[data-testid="stSidebarNav"] a:hover span { background: rgba(16,185,129,0.10); color: #ffffff !important; }
+[data-testid="stSidebarNav"] a[aria-current="page"],
+[data-testid="stSidebarNav"] a[aria-current="page"] span {
   background: rgba(16,185,129,0.14);
-  color: #fff;
+  color: #ffffff !important;
 }
 
-/* ---- Text inputs ---- */
+/* ---- Text inputs ----
+   Solid dark fill (not translucent white) with an explicit light text-fill, so
+   typed text stays readable even if the dark theme config is missing and the
+   browser falls back to a light base. The autofill rules stop the browser from
+   repainting the field white-on-white. */
 [data-testid="stTextInput"] input {
-  background: rgba(255,255,255,0.035) !important;
+  background: #101725 !important;
   border: 1px solid var(--refi-border) !important;
   border-radius: 12px !important;
   color: var(--refi-text) !important;
+  -webkit-text-fill-color: var(--refi-text) !important;
+  caret-color: var(--refi-accent) !important;
   padding: 0.72rem 0.95rem !important;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
 [data-testid="stTextInput"] input:focus {
   border-color: var(--refi-accent) !important;
   box-shadow: 0 0 0 3px rgba(16,185,129,0.20) !important;
+}
+[data-testid="stTextInput"] input::placeholder { color: var(--refi-muted) !important; opacity: 1; }
+[data-testid="stTextInput"] input:-webkit-autofill,
+[data-testid="stTextInput"] input:-webkit-autofill:hover,
+[data-testid="stTextInput"] input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--refi-text) !important;
+  -webkit-box-shadow: 0 0 0 1000px #101725 inset !important;
+  caret-color: var(--refi-accent) !important;
 }
 [data-testid="stTextInput"] label p { color: var(--refi-muted) !important; font-weight: 500; }
 

@@ -30,6 +30,10 @@ RUN poetry config virtualenvs.create false \
 # Copy the source code!
 COPY src/ /app/src/
 
+# Copy the Streamlit theme config so the deployed UI container loads the dark theme.
+# WORKDIR is /app and streamlit runs from there, so it reads /app/.streamlit/config.toml.
+COPY .streamlit/ /app/.streamlit/
+
 # Install root package now that code exists
 RUN poetry install --only-root --no-interaction --no-ansi
 
