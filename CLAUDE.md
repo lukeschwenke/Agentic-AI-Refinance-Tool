@@ -14,7 +14,7 @@ Dependencies are managed with Poetry. Run app/Python entrypoints through `poetry
 # Local dev loop (Docker for API + Streamlit UI), defined in `makefile`:
 make build      # docker buildx build the API image (linux/amd64)
 make run        # run the API container, reading .env, on port 8000
-make ui         # poetry run streamlit run src/frontend/Agentic_Refinance_Tool.py
+make ui         # poetry run streamlit run src/frontend/RefiAI_Main_Page.py
 make go         # build + run + ui
 make rebuild    # stop + build + run + ui
 make stop       # stop & remove the container
@@ -40,7 +40,7 @@ A `.env` file (gitignored) is required and read by both the app and Docker (`--e
 
 ## Architecture
 
-Request flow: **Streamlit UI** ([src/frontend/Agentic_Refinance_Tool.py](src/frontend/Agentic_Refinance_Tool.py)) → **client** ([src/frontend/client.py](src/frontend/client.py), builds the URL from env vars) → **FastAPI** `POST /refinance_agent/recommendation` ([src/api/api_setup.py](src/api/api_setup.py)) → **LangGraph workflow** → recommendation returned and the request logged to DynamoDB.
+Request flow: **Streamlit UI** ([src/frontend/RefiAI_Main_Page.py](src/frontend/RefiAI_Main_Page.py)) → **client** ([src/frontend/client.py](src/frontend/client.py), builds the URL from env vars) → **FastAPI** `POST /refinance_agent/recommendation` ([src/api/api_setup.py](src/api/api_setup.py)) → **LangGraph workflow** → recommendation returned and the request logged to DynamoDB.
 
 ### The LangGraph workflow ([src/core/workflow.py](src/core/workflow.py))
 

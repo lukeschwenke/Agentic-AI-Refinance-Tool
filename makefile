@@ -42,7 +42,7 @@ run:
 # -v $(HOME)/.aws:/root/.aws \
 
 ui:
-	poetry run streamlit run src/frontend/Agentic_Refinance_Tool.py
+	poetry run streamlit run src/frontend/RefiAI_Main_Page.py
 
 stop:
 	docker stop $(CONTAINER_NAME) || true
@@ -94,7 +94,7 @@ login-ec2-and-pull:
 		 && docker run -d --name $(UI_CONTAINER) --network $(NETWORK_NAME) --env-file ~/$(EC2_DIR)/.env \
 		    -e API_BASE_URL=http://$(PROD_API_CONTAINER) -e API_PORT=$(PORT) \
 		    $(ECR_URI):$(IMAGE_TAG) \
-		    streamlit run src/frontend/Agentic_Refinance_Tool.py --server.address=0.0.0.0 --server.port=$(UI_PORT) \
+		    streamlit run src/frontend/RefiAI_Main_Page.py --server.address=0.0.0.0 --server.port=$(UI_PORT) \
 		 && docker run -d --name $(PROXY_CONTAINER) --network $(NETWORK_NAME) \
 		    -p 80:80 -p 443:443 \
 		    -v caddy_data:/data -v caddy_config:/config \

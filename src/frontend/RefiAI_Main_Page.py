@@ -93,4 +93,4 @@ if resp:
             path = resp.get("path", "-")
             st.code(" → ".join(path) if isinstance(path, list) else str(path))
 
-# RUN: poetry run streamlit run src/frontend/Agentic_Refinance_Tool.py
+# RUN: poetry run streamlit run src/frontend/RefiAI_Main_Page.py
