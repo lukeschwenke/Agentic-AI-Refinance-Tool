@@ -80,7 +80,7 @@ def require_auth():
         login = st.button("Login  →", use_container_width=True)
 
     if login:
-        app_password = os.getenv("APP_PASSWORD", "refinance")
+        app_password = os.getenv("APP_PASSWORD", "hello916")
         if password == app_password:
             st.session_state.authenticated = True
             st.rerun()
