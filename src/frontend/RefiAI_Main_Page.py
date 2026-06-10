@@ -1,5 +1,4 @@
 import streamlit as st
-import html
 from ui import apply_theme, hero, footer, fmt_pct, fmt_money, fmt_months
 
 st.set_page_config(page_title="RefiAI", page_icon="🏡")
@@ -101,9 +100,11 @@ if resp:
         c4.metric("Break-even (mo)", fmt_months(resp.get("break_even")))
 
         st.write("")
-        recommendation = html.escape(resp.get("recommendation", "-")).replace("\n", "<br>")
+        # Render the LLM's Markdown (bold/bullets/headers). Escape $ so Streamlit doesn't
+        # treat dollar amounts as LaTeX math. st.markdown sanitizes raw HTML by default.
+        recommendation = resp.get("recommendation", "-").replace("$", "\\$")
         with st.container(border=True):
-            st.markdown(f'<div class="refi-reco">{recommendation}</div>', unsafe_allow_html=True)
+            st.markdown(recommendation)
 
         with st.expander("Agent run details"):
             st.metric("Agentic tool calls", resp.get("num_tool_calls", "-"))
