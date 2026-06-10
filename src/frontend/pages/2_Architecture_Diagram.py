@@ -12,7 +12,7 @@ page_header(
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1]
-IMG_PATH = FRONTEND_DIR / "images" / "arch_diagram_v2.png"
+IMG_PATH = FRONTEND_DIR / "images" / "arch_diagram_v3.png"
 
 _, mid, _ = st.columns([1, 6, 1])
 with mid:
