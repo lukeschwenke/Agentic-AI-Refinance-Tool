@@ -36,16 +36,34 @@ def clean_strings(text: str) -> str:
     return text.strip().replace("%", "").replace("$", "").replace(",", "")
 
 
+def _reformat(key: str, kind: str) -> None:
+    """Reformat a field's value once the user commits it (on blur/enter):
+    'pct' -> 6.125%, 'money' -> $4,755.10. Leaves empty/invalid input untouched."""
+    cleaned = clean_strings(st.session_state.get(key, ""))
+    if not cleaned:
+        return
+    try:
+        val = float(cleaned)
+    except ValueError:
+        return
+    st.session_state[key] = f"{val:g}%" if kind == "pct" else f"${val:,.2f}"
+
+
 # ---- Input card ----
 with st.container(border=True):
     st.markdown('<div class="refi-eyebrow">Your mortgage</div>', unsafe_allow_html=True)
     st.markdown("##### Tell us about your current loan")
-    rate_str = st.text_input("Current mortgage interest rate (%)", placeholder="e.g., 6.125")
+    rate_str = st.text_input(
+        "Current mortgage interest rate (%)", placeholder="e.g., 6.125",
+        key="rate_in", on_change=_reformat, args=("rate_in", "pct"),
+    )
     current_payment_str = st.text_input(
-        "Current monthly payment — principal & interest only", placeholder="e.g., $3,350"
+        "Current monthly payment — principal & interest only", placeholder="e.g., $3,350",
+        key="payment_in", on_change=_reformat, args=("payment_in", "money"),
     )
     mortgage_balance_str = st.text_input(
-        "Remaining balance on your mortgage", placeholder="e.g., $500,000"
+        "Remaining balance on your mortgage", placeholder="e.g., $500,000",
+        key="balance_in", on_change=_reformat, args=("balance_in", "money"),
     )
     run = st.button("Get recommendation  →", use_container_width=True)
 
