@@ -141,7 +141,7 @@ h1, h2, h3, h4 { letter-spacing: -0.025em !important; font-weight: 700 !importan
   border-color: var(--refi-accent) !important;
   box-shadow: 0 0 0 3px rgba(16,185,129,0.20) !important;
 }
-[data-testid="stTextInput"] input::placeholder { color: var(--refi-muted) !important; opacity: 1; }
+[data-testid="stTextInput"] input::placeholder { color: #6b7789 !important; opacity: 0.55 !important; }
 [data-testid="stTextInput"] input:-webkit-autofill,
 [data-testid="stTextInput"] input:-webkit-autofill:hover,
 [data-testid="stTextInput"] input:-webkit-autofill:focus {
