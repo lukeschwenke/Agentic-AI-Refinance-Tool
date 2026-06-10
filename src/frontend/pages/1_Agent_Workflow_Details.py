@@ -1,6 +1,6 @@
 import streamlit as st
 from pathlib import Path
-from ui import apply_theme, page_header
+from ui import apply_theme, page_header, footer
 
 st.set_page_config(page_title="Agent Workflow Details", page_icon="🏡", layout="wide")
 apply_theme()
@@ -64,3 +64,5 @@ st.markdown(
     "[Agent code](https://github.com/lukeschwenke/Agentic-AI/blob/main/src/core/agents.py)  ·  "
     "[Tools code](https://github.com/lukeschwenke/Agentic-AI/blob/main/src/core/tools.py)"
 )
+
+footer()

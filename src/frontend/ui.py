@@ -214,6 +214,15 @@ h1, h2, h3, h4 { letter-spacing: -0.025em !important; font-weight: 700 !importan
 .refi-reco {
   font-size: 1.06rem; line-height: 1.7; color: var(--refi-text);
 }
+
+/* ---- Footer: legal / disclaimers ---- */
+.refi-footer {
+  margin-top: 3.5rem; padding-top: 1.2rem;
+  border-top: 1px solid var(--refi-border);
+  font-size: 0.72rem; line-height: 1.6; color: var(--refi-muted);
+  opacity: 0.85;
+}
+.refi-footer strong { color: var(--refi-text); font-weight: 600; }
 </style>
 """
 
@@ -257,6 +266,25 @@ def page_header(eyebrow: str, title: str, subtitle: str | None = None):
           <div class="refi-eyebrow">{eyebrow}</div>
           <h1 class="refi-title" style="font-size:2.4rem;margin-top:2px;">{title}</h1>
           {sub}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def footer():
+    """Small legal footer — call at the bottom of every page."""
+    st.markdown(
+        """
+        <div class="refi-footer">
+          <strong>Disclaimer:</strong> RefiAI is a personal demo project for educational purposes.
+          It does not provide financial, legal, or tax advice, and nothing on this site is a loan
+          offer, quote, or commitment to lend. Rates and calculations may be inaccurate or delayed —
+          consult a licensed professional before making financial decisions.<br>
+          <strong>Privacy:</strong> Mortgage inputs you submit and your IP address are logged to
+          operate and rate-limit this demo. No data is sold or shared with third parties.<br>
+          <strong>Terms:</strong> Provided "as is" without warranty of any kind; use at your own
+          risk. Daily usage limits apply. &copy; 2026 Luke Schwenke.
         </div>
         """,
         unsafe_allow_html=True,

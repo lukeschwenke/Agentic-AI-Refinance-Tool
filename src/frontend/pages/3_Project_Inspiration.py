@@ -1,6 +1,6 @@
 import streamlit as st
 from pathlib import Path
-from ui import apply_theme, page_header
+from ui import apply_theme, page_header, footer
 
 st.set_page_config(page_title="Project Inspiration", page_icon="🏡", layout="wide")
 apply_theme()
@@ -48,3 +48,5 @@ with st.container(border=True):
     )
 
 st.image(str(FRONTEND_DIR / "images" / "refi_daily_email.png"), width="stretch")
+
+footer()

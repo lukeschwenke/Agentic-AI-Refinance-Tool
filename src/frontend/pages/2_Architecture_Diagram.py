@@ -1,6 +1,6 @@
 import streamlit as st
 from pathlib import Path
-from ui import apply_theme, page_header
+from ui import apply_theme, page_header, footer
 
 st.set_page_config(page_title="AWS Architecture", page_icon="🏡", layout="wide")
 apply_theme()
@@ -18,3 +18,5 @@ _, mid, _ = st.columns([1, 6, 1])
 with mid:
     with st.container(border=True):
         st.image(str(IMG_PATH), width="stretch")
+
+footer()

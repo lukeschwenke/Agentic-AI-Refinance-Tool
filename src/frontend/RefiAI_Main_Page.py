@@ -1,6 +1,6 @@
 import streamlit as st
 import html
-from ui import apply_theme, hero, fmt_pct, fmt_money, fmt_months
+from ui import apply_theme, hero, footer, fmt_pct, fmt_money, fmt_months
 
 st.set_page_config(page_title="RefiAI", page_icon="🏡")
 apply_theme()
@@ -92,5 +92,7 @@ if resp:
             st.caption("The path this agentic workflow took:")
             path = resp.get("path", "-")
             st.code(" → ".join(path) if isinstance(path, list) else str(path))
+
+footer()
 
 # RUN: poetry run streamlit run src/frontend/RefiAI_Main_Page.py
