@@ -31,19 +31,19 @@ _PALM_SVG = """
 </svg>
 """
 
-_PALMS_CSS = """
-<style>
-.refi-palm { position: fixed; pointer-events: none; z-index: 0; opacity: 0.28; }
-.refi-palm-bl { bottom: -8px; left: 16px; }
-.refi-palm-br { bottom: -8px; right: 16px; transform: scaleX(-1); }
-.refi-palm-tl { top: 56px;  left: 30px;  transform: scale(0.55) rotate(-12deg); opacity: 0.18; }
-.refi-palm-tr { top: 56px;  right: 30px; transform: scale(0.55) scaleX(-1) rotate(-12deg); opacity: 0.18; }
-</style>
-<div class="refi-palm refi-palm-bl">{palm}</div>
-<div class="refi-palm refi-palm-br">{palm}</div>
-<div class="refi-palm refi-palm-tl">{palm}</div>
-<div class="refi-palm refi-palm-tr">{palm}</div>
-""".format(palm=_PALM_SVG)
+_PALMS_CSS = (
+    "<style>"
+    ".refi-palm { position: fixed; pointer-events: none; z-index: 0; opacity: 0.28; }"
+    ".refi-palm-bl { bottom: -8px; left: 16px; }"
+    ".refi-palm-br { bottom: -8px; right: 16px; transform: scaleX(-1); }"
+    ".refi-palm-tl { top: 56px; left: 30px; transform: scale(0.55) rotate(-12deg); opacity: 0.18; }"
+    ".refi-palm-tr { top: 56px; right: 30px; transform: scale(0.55) scaleX(-1) rotate(-12deg); opacity: 0.18; }"
+    "</style>"
+    '<div class="refi-palm refi-palm-bl">' + _PALM_SVG + "</div>"
+    '<div class="refi-palm refi-palm-br">' + _PALM_SVG + "</div>"
+    '<div class="refi-palm refi-palm-tl">' + _PALM_SVG + "</div>"
+    '<div class="refi-palm refi-palm-tr">' + _PALM_SVG + "</div>"
+)
 
 
 def require_auth():
