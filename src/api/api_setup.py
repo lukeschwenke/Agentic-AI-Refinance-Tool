@@ -8,7 +8,13 @@ import logging
 import traceback
 from datetime import datetime, timezone
 import os, json, time, uuid
-from core.db_logging import log_event, increment_ip_usage, DAILY_IP_LIMIT
+from core.db_logging import (
+    log_event,
+    increment_ip_usage,
+    increment_global_usage,
+    DAILY_IP_LIMIT,
+    DAILY_GLOBAL_LIMIT,
+)
 from zoneinfo import ZoneInfo
 load_dotenv()
 
@@ -49,9 +55,12 @@ def extract_text(value) -> str:
 # ----- Routes -----
 @app.post("/refinance_agent/recommendation", response_model=RefiAdviceResponse)
 def return_advice_recommendation(payload: RefiAdviceRequest):
-    # Daily per-IP demo limit. Checked outside the try below so the 429
-    # isn't swallowed and re-raised as a 500. If DynamoDB is unreachable
-    # we fail open rather than lock visitors out.
+    # Daily demo limits, applied to UI traffic only (requests carrying a
+    # client_ip) so the scheduled Lambda is never locked out. Per-IP is
+    # checked first so a blocked IP can't burn the global budget. Checked
+    # outside the try below so the 429 isn't swallowed and re-raised as a
+    # 500. If DynamoDB is unreachable we fail open rather than lock
+    # visitors out.
     if payload.client_ip:
         try:
             used_today = increment_ip_usage(payload.client_ip)
@@ -64,6 +73,21 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
                 detail=(
                     f"Demo limit reached: this demo allows {DAILY_IP_LIMIT} "
                     "recommendations per visitor per day. Please come back tomorrow!"
+                ),
+            )
+
+        try:
+            global_today = increment_global_usage()
+        except Exception:
+            logger.exception("Global rate-limit check failed; allowing request.")
+            global_today = None
+        if global_today is not None and global_today > DAILY_GLOBAL_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "The demo is at capacity for today — it allows "
+                    f"{DAILY_GLOBAL_LIMIT} recommendations per day across all "
+                    "visitors. Please come back tomorrow!"
                 ),
             )
 

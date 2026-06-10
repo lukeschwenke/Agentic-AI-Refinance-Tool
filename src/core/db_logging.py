@@ -11,8 +11,10 @@ dynamodb = boto3.resource(
 
 table = dynamodb.Table(os.environ["LOG_TABLE"])
 
-# Max recommendations per visitor IP per day (Eastern), enforced by the API.
+# Demo limits enforced by the API, per day (Eastern): per visitor IP, and a
+# global ceiling across all visitors that bounds worst-case OpenAI/Tavily spend.
 DAILY_IP_LIMIT = 5
+DAILY_GLOBAL_LIMIT = 25
 
 
 def _d(x):
@@ -33,15 +35,15 @@ def log_event(interest_rate, current_payment, mortgage_balance, timestamp, prima
     print("Successfully logged to DB!")
 
 
-def increment_ip_usage(ip: str) -> int:
-    """Atomically bump today's request count for this IP and return the new count.
+def _increment_daily_counter(scope: str) -> int:
+    """Atomically bump today's counter for `scope` and return the new count.
 
-    Counters live in the same log table under primary_key "ratelimit#<ip>#<date>",
-    so the limit resets at midnight Eastern and no extra table is needed.
+    Counters live in the same log table under primary_key "ratelimit#<scope>#<date>",
+    so limits reset at midnight Eastern and no extra table is needed.
     """
     today = datetime.now(ZoneInfo("US/Eastern")).date().isoformat()
     resp = table.update_item(
-        Key={"primary_key": f"ratelimit#{ip}#{today}"},
+        Key={"primary_key": f"ratelimit#{scope}#{today}"},
         # "count" is a DynamoDB reserved word, hence the name placeholder
         UpdateExpression="ADD #c :one",
         ExpressionAttributeNames={"#c": "count"},
@@ -49,3 +51,11 @@ def increment_ip_usage(ip: str) -> int:
         ReturnValues="UPDATED_NEW",
     )
     return int(resp["Attributes"]["count"])
+
+
+def increment_ip_usage(ip: str) -> int:
+    return _increment_daily_counter(ip)
+
+
+def increment_global_usage() -> int:
+    return _increment_daily_counter("global")
