@@ -1,4 +1,5 @@
 import re
+import math
 import requests
 from langchain_core.tools import tool
 from tavily import TavilyClient
@@ -157,6 +158,23 @@ def get_rates_search_tool() -> str:
     return answer
 
 
+def get_rate_outlook_search() -> str:
+    """Near-term outlook for US 30-year fixed mortgage rates (Fed signals + forecaster
+    commentary) via a Tavily finance search. Returns the LLM-generated answer text."""
+    tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+    response = tavily_client.search(
+        query=("Over the next few months, are US 30-year fixed mortgage rates expected to "
+               "rise, fall, or hold steady? What are the Federal Reserve and forecasters "
+               "signaling? Answer briefly."),
+        topic="finance",
+        search_depth="basic",
+        max_results=4,
+        time_range="week",
+        include_answer=True,
+    )
+    return response["answer"]
+
+
 LOCAL_CU_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -225,29 +243,109 @@ def get_local_credit_union_30yr_rate() -> float:
     return parse_conforming_30yr_avg(resp.text)
 
 
-def calculate_estimates_and_breakeven(#interest_rate: float,
-                                      current_payment: float,
-                                      mortgage_balance: float,
-                                      market_rate: float) -> tuple[float, float]:
-    """Calculate the new monthly mortgage payment and the break-even period on the closing costs"""
-    ### New Payment Calculation ###
-    remaining_term_years = 30
-    # Convert to monthly rate
-    r = (market_rate / 100) / 12
-    n = int(remaining_term_years * 12)  # total remaining monthly payments
-    # Compute new monthly payment using amortization formula
-    if r == 0:
-        # Zero-interest edge case
-        return mortgage_balance / n
-    # New Monthly Mortgage Payment (P&I only)
-    new_payment = mortgage_balance * (r * (1 + r)**n) / ((1 + r)**n - 1)
+# --- Refinance calculation defaults (tunable; see the scenarios/strategy spec) ---
+DEFAULT_CLOSING_COST_PCT = 0.02     # 2% of balance when no quote given (2026 norm: 2-6%)
+DEFAULT_STAY_HORIZON_YEARS = 7      # median owner tenure; used when horizon not provided
+SCENARIO_TERMS = (30, 15)           # standard alt terms modeled alongside "keep payoff date"
 
-    ### Break Even Calculation ###
-    estimated_closing_costs = mortgage_balance * 0.01
-    monthly_savings = current_payment - new_payment
-    break_even = estimated_closing_costs / monthly_savings
-    
-    return new_payment, monthly_savings, break_even
+
+def monthly_payment(balance: float, annual_rate: float, term_years: float) -> float:
+    """Standard amortized monthly P&I payment for a loan of `balance` at `annual_rate`
+    (percent) over `term_years` years."""
+    r = (annual_rate / 100) / 12
+    n = int(round(term_years * 12))
+    if n <= 0:
+        return 0.0
+    if r == 0:
+        return balance / n
+    return balance * (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+
+
+def total_interest(payment: float, term_years: float, principal: float) -> float:
+    """Total interest paid over the life of a loan (sum of payments minus principal)."""
+    return payment * int(round(term_years * 12)) - principal
+
+
+def estimate_remaining_term_years(balance, current_payment, interest_rate):
+    """Solve the amortization equation for the number of years left on the CURRENT loan
+    from (remaining balance, monthly P&I payment, annual rate). Returns None if the
+    payment doesn't cover the monthly interest (no finite term can be derived)."""
+    r = (interest_rate / 100) / 12
+    if r <= 0:
+        return None
+    denom = current_payment - balance * r          # (1+r)^n = P / (P - B*r)
+    if denom <= 0:
+        return None
+    return (math.log(current_payment / denom) / math.log(1 + r)) / 12
+
+
+def resolve_closing_costs(closing_costs, balance: float) -> float:
+    """Use the user's closing-cost quote if given, else default to
+    DEFAULT_CLOSING_COST_PCT of the balance."""
+    if closing_costs and closing_costs > 0:
+        return float(closing_costs)
+    return balance * DEFAULT_CLOSING_COST_PCT
+
+
+def build_scenario(label, balance, current_payment, market_rate, new_term_years,
+                   remaining_term_years, closing_costs, horizon_years) -> dict:
+    """Compute one refinance scenario fully and deterministically (no LLM). The Strategy
+    agent reasons over these dicts; it does NOT compute the numbers itself."""
+    new_pmt = monthly_payment(balance, market_rate, new_term_years)
+    monthly_savings = current_payment - new_pmt
+    break_even = (closing_costs / monthly_savings) if monthly_savings > 0 else None
+    new_interest = total_interest(new_pmt, new_term_years, balance)
+    current_interest = total_interest(current_payment, remaining_term_years, balance)
+    horizon_months = horizon_years * 12
+    return {
+        "label": label,
+        "term_years": round(new_term_years, 1),
+        "new_payment": round(new_pmt, 2),
+        "monthly_savings": round(monthly_savings, 2),
+        "break_even": round(break_even, 1) if break_even is not None else None,
+        "lifetime_interest_delta": round(new_interest - current_interest, 2),  # + = costs more
+        "net_savings_over_horizon": round(monthly_savings * horizon_months - closing_costs, 2),
+        "breaks_even_within_horizon": break_even is not None and break_even <= horizon_months,
+    }
+
+
+def build_refinance_scenarios(balance, current_payment, market_rate, remaining_term_years,
+                              closing_costs, horizon_years) -> list:
+    """Build the standard scenario set:
+    - 'Keep your current payoff date' (same remaining term -> apples-to-apples)
+    - 30-year reset (lowest payment)
+    - 15-year (fastest payoff)
+    Terms within ~1 year of an already-added term are skipped (dedupe)."""
+    scenarios, seen = [], set()
+
+    def _add(label, term):
+        key = round(term)
+        if term <= 0 or key in seen:
+            return
+        seen.add(key)
+        scenarios.append(build_scenario(label, balance, current_payment, market_rate,
+                                        term, remaining_term_years, closing_costs, horizon_years))
+
+    _add("Keep your current payoff date", remaining_term_years)
+    for t in SCENARIO_TERMS:
+        _add("Lower payment (30-yr)" if t == 30 else "Pay off faster (15-yr)", float(t))
+    return scenarios
+
+
+def calculate_estimates_and_breakeven(current_payment: float,
+                                      mortgage_balance: float,
+                                      market_rate: float,
+                                      term_years: float = 30,
+                                      closing_costs: float | None = None) -> tuple[float, float, float | None]:
+    """Calculate the new monthly P&I payment, monthly savings, and break-even period
+    (months) for a refinance into `term_years` at `market_rate`. Closing costs default
+    to DEFAULT_CLOSING_COST_PCT of the balance when not provided. Break-even is None when
+    there are no monthly savings."""
+    new_pmt = monthly_payment(mortgage_balance, market_rate, term_years)
+    costs = resolve_closing_costs(closing_costs, mortgage_balance)
+    monthly_savings = current_payment - new_pmt
+    break_even = costs / monthly_savings if monthly_savings > 0 else None
+    return new_pmt, monthly_savings, break_even
 
 # Define the tools for the agents to use using LangChains tool decorate
 # It needs to be done this way because PyTest will throw an error if @tool is present 
@@ -264,6 +362,11 @@ def get_rates_search_tool_for_agent() -> str:
     return get_rates_search_tool()
 
 @tool
+def get_rate_outlook_search_for_agent() -> str:
+    """Get the near-term outlook for 30-year fixed mortgage rates."""
+    return get_rate_outlook_search()
+
+@tool
 def get_local_credit_union_30yr_rate_for_agent() -> float:
     """Get the local credit union's (Washington DC area) average 30-year fixed rate."""
     return get_local_credit_union_30yr_rate()
@@ -273,18 +376,24 @@ class CalcArgs(BaseModel):
     current_payment: float
     mortgage_balance: float
     market_rate: float
+    term_years: float = 30
+    closing_costs: float | None = None
 
 @tool(args_schema=CalcArgs)
 def calculate_estimates_and_breakeven_for_agent(
     current_payment: float,
     mortgage_balance: float,
-    market_rate: float
-) -> tuple[float, float, float]:
+    market_rate: float,
+    term_years: float = 30,
+    closing_costs: float | None = None
+) -> tuple[float, float, float | None]:
     """Calculate the user's estimated new payment, savings, and break-even point."""
     return calculate_estimates_and_breakeven(
         current_payment=current_payment,
         mortgage_balance=mortgage_balance,
-        market_rate=market_rate
+        market_rate=market_rate,
+        term_years=term_years,
+        closing_costs=closing_costs
     )
 
 if __name__ == "__main__":

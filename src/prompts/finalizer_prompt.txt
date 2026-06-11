@@ -7,8 +7,11 @@ digestible — short bullets, bold headers, and bold figures — not a dense par
   or "**You're better off keeping your current loan for now.**").
 - Then short sections, each a **bold mini-header** followed by 1–3 one-sentence bullets:
   - **Rates** — the rates you found and which one drove the math.
+  - **Best structure** — the recommended loan structure and the monthly-vs-lifetime tradeoff.
   - **Your savings** — new payment, monthly savings, and break-even (or why they weren't calculated).
+  - **Will it pay off?** — break-even vs. how long they plan to stay.
   - **Timing (Treasury)** — the yield, its 52-week standing, and the spread; clearly framed as context.
+  - **Rate outlook** — the forward-looking view; also context, not a gate.
 - **Bold every key number.** Format money as **$3,412.21** and percentages with up to 3 decimals
   (e.g. **6.125%**). Keep each bullet to ONE short sentence.
 - Close with a **Bottom line:** one-sentence takeaway.
@@ -24,15 +27,32 @@ digestible — short bullets, bold headers, and bold figures — not a dense par
 
 ## Decision (this sets the verdict)
 - If {interest_rate} < {market_rate}: advise the user NOT to refinance — their rate already beats the
-  market — and keep the savings/timing sections brief (note they don't change the answer).
+  market — and keep the remaining sections brief (note they don't change the answer).
 - If {interest_rate} > {market_rate}: refinancing MAY be beneficial; if (interest_rate − market_rate) ≥ 1.0,
   call it a strong refinancing opportunity.
 
+## Best structure (Strategy)
+- The recommended structure is: {recommended_scenario_label}. Strategist's note: {strategy_rationale}
+- Here are the structures we modeled (new payment, monthly savings, break-even, lifetime-interest change,
+  and net savings over the user's horizon):
+{scenarios_text}
+- IMPORTANT: a lower monthly payment can still COST more over the life of the loan. The recommended
+  structure's lifetime-interest change is {lifetime_interest_delta} dollars — if that number is POSITIVE,
+  explicitly warn the user that resetting the term adds total interest even though the payment drops; if
+  NEGATIVE, note they also save on lifetime interest.
+- Their current loan has about {remaining_term_years} years left; mention the payoff-date impact of the
+  recommended structure (a fresh 30-year term restarts the clock).
+
 ## Your savings
 - New payment **{new_payment}** vs your current **{current_payment}** → monthly savings **{monthly_savings}**;
-  break-even **{break_even} months**.
-- Note the estimate assumes a 30-year loan at {market_rate}% on a {mortgage_balance} remaining balance.
+  break-even **{break_even} months** (on a {mortgage_balance} balance).
 - If these are null/0 (because the user's rate already beats the market), say they weren't calculated.
+
+## Will it pay off? (break-even vs. horizon)
+- The user plans to keep the home about {stay_horizon_years} years. The "breaks even within horizon" flag is
+  {breaks_even_within_horizon}.
+- If that flag is True, state plainly they recoup closing costs before they'd sell (good); if False, warn that
+  they'd likely sell BEFORE breaking even, so refinancing may not be worth it; if null, say it wasn't evaluated.
 
 ## Timing (Treasury) — context, NOT a pass/fail gate
 The classifications are precomputed; use these labels verbatim and do NOT contradict them with the raw numbers.
@@ -44,5 +64,12 @@ The classifications are precomputed; use these labels verbatim and do NOT contra
   TIGHT = little spread room left.
 - If {treasury_timing_label} is "unavailable" (or values are null), say the Treasury context wasn't
   evaluated (e.g. because the user's rate already beats the market) rather than reporting zeros.
+
+## Rate outlook (forward-looking) — context, NOT a gate
+- Near-term outlook for 30-year mortgage rates: {rate_outlook_label}; suggested posture: {rate_outlook_action}.
+- In plain English: {rate_outlook_summary}
+- Frame this as a forward view that complements the Treasury timing above. If the label is "unavailable" or the
+  summary is empty, say the outlook couldn't be retrieved rather than inventing one. NEVER present this as a
+  guarantee of where rates will go.
 
 Now write the recommendation, following the OUTPUT FORMAT above. Keep the whole thing tight and skimmable.

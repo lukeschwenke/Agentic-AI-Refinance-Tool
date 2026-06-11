@@ -28,6 +28,11 @@ class RefiAdviceRequest(BaseModel):
     current_payment: float = Field(..., gt=0, description="User's current monthly mortgage pamyne (principal and interest only, e.g., $3,200)")
     mortgage_balance: float = Field(..., gt=0, description="User's remaining balance on mortgage (e.g., $500,000)")
     client_ip: Optional[str] = Field(None, description="End-user IP forwarded by the UI; used for the daily demo rate limit")
+    # Optional "advanced details" — defaulted/derived downstream when omitted, so the
+    # 3-field flow (and the daily Lambda) keep working unchanged.
+    remaining_term_years: Optional[float] = Field(None, gt=0, description="Years left on the current loan (derived from payment/balance/rate if omitted)")
+    stay_horizon_years: Optional[float] = Field(None, gt=0, description="How long the user plans to keep the home (years)")
+    closing_costs: Optional[float] = Field(None, gt=0, description="Estimated refinance closing costs in dollars (defaults to ~2% of balance)")
 
 class RefiAdviceResponse(BaseModel):
     recommendation: str
@@ -38,6 +43,12 @@ class RefiAdviceResponse(BaseModel):
     new_payment: Optional[float] = None
     monthly_savings: Optional[float] = None
     break_even: Optional[float] = None
+    scenarios: List[dict] = []
+    recommended_scenario_label: Optional[str] = None
+    lifetime_interest_delta: Optional[float] = None
+    rate_outlook_label: Optional[str] = None
+    rate_outlook_summary: Optional[str] = None
+    rate_outlook_action: Optional[str] = None
 
 # ----- Helpers -----
 def extract_text(value) -> str:
@@ -96,6 +107,9 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
             "interest_rate": payload.interest_rate,
             "current_payment": payload.current_payment,
             "mortgage_balance": payload.mortgage_balance,
+            "remaining_term_years": payload.remaining_term_years,
+            "stay_horizon_years": payload.stay_horizon_years,
+            "closing_costs": payload.closing_costs,
             "treasury_yield": None,
             "treasury_yr_low": None,
             "treasury_yr_high": None,
@@ -110,6 +124,14 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
             "market_rate_source": "",
             "num_tool_calls": 0,
             "path": [],
+            "scenarios": [],
+            "recommended_scenario_label": "",
+            "strategy_rationale": "",
+            "lifetime_interest_delta": None,
+            "breaks_even_within_horizon": None,
+            "rate_outlook_label": "unavailable",
+            "rate_outlook_summary": "",
+            "rate_outlook_action": "neutral",
             "new_payment": None,
             "monthly_savings": None,
             "break_even": None,
@@ -126,7 +148,13 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
             path=list(result.get("path", [])),
             new_payment=result.get("new_payment", None),
             monthly_savings=result.get("monthly_savings", None),
-            break_even=result.get("break_even", None)
+            break_even=result.get("break_even", None),
+            scenarios=list(result.get("scenarios", []) or []),
+            recommended_scenario_label=result.get("recommended_scenario_label") or None,
+            lifetime_interest_delta=result.get("lifetime_interest_delta", None),
+            rate_outlook_label=result.get("rate_outlook_label") or None,
+            rate_outlook_summary=result.get("rate_outlook_summary") or None,
+            rate_outlook_action=result.get("rate_outlook_action") or None,
             )
         
         print("POST Request Successful!")

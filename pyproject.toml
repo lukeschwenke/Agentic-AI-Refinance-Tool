@@ -46,6 +46,7 @@ markers = [
     "local_cu: live test for the local credit union rate fetch",
     "treasury: live test for the 10-year treasury yield fetch",
     "interest_rate: live test for the Tavily average interest rate",
+    "rate_outlook: live test for the Tavily mortgage-rate outlook search",
     "calculation: offline unit/calculation tests",
 ]
 [dependency-groups]

@@ -24,12 +24,18 @@ else:
 def get_recommendation(interest_rate: float,
                        current_payment: float,
                        mortgage_balance: float,
-                       client_ip: Optional[str] = None) -> RefiAdviceResponse:
+                       client_ip: Optional[str] = None,
+                       remaining_term_years: Optional[float] = None,
+                       stay_horizon_years: Optional[float] = None,
+                       closing_costs: Optional[float] = None) -> RefiAdviceResponse:
 
     data_payload = RefiAdviceRequest(interest_rate=interest_rate,
                                      current_payment=current_payment,
                                      mortgage_balance=mortgage_balance,
-                                     client_ip=client_ip).model_dump()
+                                     client_ip=client_ip,
+                                     remaining_term_years=remaining_term_years,
+                                     stay_horizon_years=stay_horizon_years,
+                                     closing_costs=closing_costs).model_dump()
 
     try:
         response = requests.post(FULL_API_URL, json=data_payload, timeout=90)

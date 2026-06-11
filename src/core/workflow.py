@@ -15,14 +15,20 @@ def condition(state: State) -> str:
 workflow = StateGraph(State)
 workflow.add_node("market", market_expert_agent)
 workflow.add_node("treasury_yield", treasury_yield_agent)
+workflow.add_node("rate_outlook", rate_outlook_agent)
 workflow.add_node("calculator", calculator_agent)
+workflow.add_node("strategy", strategy_agent)
 workflow.add_node("finalizer", finalizer_agent)
 
 workflow.set_entry_point("market")
 workflow.add_conditional_edges("market", condition, {"CONTINUE": "treasury_yield",
                                                      "END": "finalizer"})
-workflow.add_edge("treasury_yield", "calculator")
-workflow.add_edge("calculator", "finalizer")
+# CONTINUE path: deterministic Treasury signal -> forward-looking outlook -> scenario
+# math -> strategy pick -> finalizer.
+workflow.add_edge("treasury_yield", "rate_outlook")
+workflow.add_edge("rate_outlook", "calculator")
+workflow.add_edge("calculator", "strategy")
+workflow.add_edge("strategy", "finalizer")
 workflow.add_edge("finalizer", END)
 
 app=workflow.compile()

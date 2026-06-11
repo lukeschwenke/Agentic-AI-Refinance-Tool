@@ -9,6 +9,14 @@ from core.tools import (
     parse_conforming_30yr_avg,
     consolidate_rates,
     get_local_credit_union_30yr_rate,
+    monthly_payment,
+    total_interest,
+    estimate_remaining_term_years,
+    resolve_closing_costs,
+    build_scenario,
+    build_refinance_scenarios,
+    get_rate_outlook_search,
+    DEFAULT_CLOSING_COST_PCT,
 )
 
 # Minimal, name-free fixture mirroring the real "today's featured rates" markup.
@@ -200,4 +208,89 @@ def test_live_treasury_10yr_quote():
     assert 0.0 < q["last"] < 20.0
     if q["yr_high"] is not None and q["yr_low"] is not None:
         assert 0.0 < q["yr_low"] <= q["last"] <= q["yr_high"] < 20.0
+
+
+# ---- Refinance math (pure, offline) ----
+
+@pytest.mark.calculation
+def test_monthly_payment_known_value():
+    """$500k @ 6% over 30yr -> ~$2,997.75 P&I."""
+    assert monthly_payment(500_000, 6.0, 30) == pytest.approx(2997.75, abs=0.5)
+
+
+@pytest.mark.calculation
+def test_monthly_payment_zero_rate_is_straight_line():
+    """A 0% loan is just principal spread evenly across the term."""
+    assert monthly_payment(360_000, 0.0, 30) == pytest.approx(1000.0, abs=0.01)
+
+
+@pytest.mark.calculation
+def test_estimate_remaining_term_round_trips():
+    """The payment produced by a 30yr loan should imply ~30 years remaining."""
+    pmt = monthly_payment(500_000, 6.0, 30)
+    years = estimate_remaining_term_years(500_000, pmt, 6.0)
+    assert years == pytest.approx(30.0, abs=0.1)
+
+
+@pytest.mark.calculation
+def test_estimate_remaining_term_none_when_payment_below_interest():
+    """If the monthly payment doesn't cover interest, no finite term exists."""
+    # 500k @ 6% accrues ~$2,500/mo interest; a $1,000 payment never amortizes.
+    assert estimate_remaining_term_years(500_000, 1_000, 6.0) is None
+
+
+@pytest.mark.calculation
+def test_resolve_closing_costs_quote_vs_default():
+    assert resolve_closing_costs(9_000, 500_000) == 9_000.0          # explicit quote wins
+    assert resolve_closing_costs(None, 500_000) == 500_000 * DEFAULT_CLOSING_COST_PCT
+    assert resolve_closing_costs(0, 500_000) == 500_000 * DEFAULT_CLOSING_COST_PCT  # 0 -> default
+
+
+@pytest.mark.calculation
+def test_total_interest_basic():
+    """Total interest = payments * months - principal."""
+    # 0% / 30yr on 360k -> $1,000 x 360 - 360k = 0 interest.
+    assert total_interest(1_000, 30, 360_000) == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.calculation
+def test_build_scenario_term_reset_trap_adds_lifetime_interest():
+    """A 30-yr reset over a ~20-yr-remaining loan at a modestly lower rate lowers the
+    monthly payment but ADDS lifetime interest (delta > 0) -- the trap we want to surface."""
+    # Borrower: 300k left, ~20yr remaining at 7%, paying ~$2,326/mo. Refi to 30yr @ 6%.
+    current_payment = monthly_payment(300_000, 7.0, 20)
+    s = build_scenario("Lower payment (30-yr)", 300_000, current_payment, 6.0,
+                       new_term_years=30, remaining_term_years=20,
+                       closing_costs=6_000, horizon_years=7)
+    assert s["monthly_savings"] > 0                 # payment drops
+    assert s["lifetime_interest_delta"] > 0         # but lifetime interest rises
+    assert s["break_even"] == pytest.approx(6_000 / s["monthly_savings"], abs=0.1)
+
+
+@pytest.mark.calculation
+def test_build_scenario_horizon_fields():
+    s = build_scenario("Keep your current payoff date", 300_000, 2_500, 6.0,
+                       new_term_years=20, remaining_term_years=20,
+                       closing_costs=6_000, horizon_years=7)
+    expected_net = s["monthly_savings"] * 7 * 12 - 6_000
+    assert s["net_savings_over_horizon"] == pytest.approx(expected_net, abs=0.5)
+    assert s["breaks_even_within_horizon"] == (s["break_even"] is not None and s["break_even"] <= 84)
+
+
+@pytest.mark.calculation
+def test_build_refinance_scenarios_dedupes_when_remaining_near_30():
+    """A ~30-yr remaining loan should not produce a duplicate 30-yr reset row."""
+    scenarios = build_refinance_scenarios(500_000, 3_500, 6.0, remaining_term_years=30,
+                                          closing_costs=10_000, horizon_years=7)
+    terms = [round(s["term_years"]) for s in scenarios]
+    assert terms.count(30) == 1                     # 'keep payoff' (30) merged with the 30-yr reset
+    assert 15 in terms                              # 15-yr option still present
+
+
+@pytest.mark.rate_outlook
+def test_live_rate_outlook_search():
+    """Live: Tavily returns a non-empty near-term mortgage-rate outlook string."""
+    val = get_rate_outlook_search()
+    print(f"TEST - Rate outlook = {val}")
+    assert isinstance(val, str) and len(val.strip()) > 0
 

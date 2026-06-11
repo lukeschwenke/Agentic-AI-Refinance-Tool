@@ -25,6 +25,21 @@ class State(TypedDict):
     path: List[str]
     current_payment: float
     mortgage_balance: float
+    # Optional user-provided "advanced details" (None -> derived/defaulted downstream)
+    remaining_term_years: float | None
+    stay_horizon_years: float | None
+    closing_costs: float | None
+    # Scenario/strategy outputs
+    scenarios: list
+    recommended_scenario_label: str
+    strategy_rationale: str
+    lifetime_interest_delta: float | None
+    breaks_even_within_horizon: bool | None
+    # Forward-looking rate outlook
+    rate_outlook_label: str
+    rate_outlook_summary: str
+    rate_outlook_action: str
+    # Primary (recommended-scenario) numbers used by the metric cards / API response
     new_payment: float | None
     monthly_savings: float | None
     break_even: float | None
@@ -46,5 +61,6 @@ llm_finalizer = ChatOpenAI(model=os.getenv("OPENAI_FINALIZER_MODEL_NAME", "gpt-5
 
 llm_with_tools = llm.bind_tools([get_treasury_10yr_yield_for_agent,
                                  get_rates_search_tool_for_agent,
+                                 get_rate_outlook_search_for_agent,
                                  get_local_credit_union_30yr_rate_for_agent,
                                  calculate_estimates_and_breakeven_for_agent])

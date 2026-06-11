@@ -7,8 +7,37 @@ from pathlib import Path
 
 tool_nodes = ToolNode([get_treasury_10yr_yield_for_agent,
                        get_rates_search_tool_for_agent,
+                       get_rate_outlook_search_for_agent,
                        get_local_credit_union_30yr_rate_for_agent,
                        calculate_estimates_and_breakeven_for_agent])
+
+
+def _extract_json(text: str) -> str:
+    """Pull the first JSON object out of an LLM response, tolerating ```json fences."""
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1]
+        if text.lstrip().lower().startswith("json"):
+            text = text.lstrip()[4:]
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if start != -1 and end != -1 else text
+
+
+def _format_scenarios_for_prompt(scenarios) -> str:
+    """Render the scenario list as compact bullets for the finalizer prompt."""
+    if not scenarios:
+        return "(no scenarios computed)"
+    lines = []
+    for s in scenarios:
+        be = f"{s['break_even']} mo" if s["break_even"] is not None else "n/a"
+        lines.append(
+            f"- {s['label']} ({s['term_years']}-yr): new payment ${s['new_payment']:,.2f}, "
+            f"monthly savings ${s['monthly_savings']:,.2f}, break-even {be}, "
+            f"lifetime interest change ${s['lifetime_interest_delta']:,.2f}, "
+            f"net over horizon ${s['net_savings_over_horizon']:,.2f}"
+        )
+    return "\n".join(lines)
 
 def _get_national_rate_via_tavily() -> float:
     """National average via Tavily search + a follow-on LLM numeric extraction.
@@ -93,63 +122,152 @@ def treasury_yield_agent(state: State) -> dict:
     state["path"].append("treasury_yield_agent")
     return state
 
+# Agent #2b
+def rate_outlook_agent(state: State) -> dict:
+    """Adds a FORWARD-looking view on top of the deterministic Treasury timing signal:
+    searches recent Fed/forecaster commentary on where 30-year mortgage rates are headed,
+    then has the LLM classify it into a label + action + one-sentence summary. Framed as
+    timing context (not a gate). Degrades to 'unavailable' on any failure."""
+    try:
+        outlook_text = get_rate_outlook_search()
+        print("===SUCCESSFULLY EXECUTED RATE OUTLOOK AGENT TOOL CALL===")
+    except Exception:
+        outlook_text = ""
+
+    if not outlook_text:
+        state["rate_outlook_label"] = "unavailable"
+        state["rate_outlook_summary"] = ""
+        state["rate_outlook_action"] = "neutral"
+        state["path"].append("rate_outlook_agent")
+        return state
+
+    prompt = f"""Classify the near-term outlook for US 30-year fixed mortgage rates from the
+market commentary below. Respond with ONLY valid JSON:
+{{"label": "falling|stable|rising", "action": "act|wait|neutral", "summary": "<one short sentence>"}}
+
+Rules:
+- label = expected direction of mortgage rates over the next few months.
+- action = "wait" if rates look likely to fall meaningfully, "act" if they look likely to
+  rise (lock in now), otherwise "neutral".
+- summary = one plain-English sentence a homeowner can understand.
+
+Commentary:
+{outlook_text}"""
+
+    label, action, summary = "unavailable", "neutral", outlook_text.strip()[:300]
+    try:
+        resp = llm.invoke(prompt)
+        data = json.loads(_extract_json(resp.content))
+        label = (data.get("label") or "unavailable")
+        action = (data.get("action") or "neutral")
+        summary = (data.get("summary") or summary)
+    except Exception:
+        pass
+
+    state["rate_outlook_label"] = label
+    state["rate_outlook_summary"] = summary
+    state["rate_outlook_action"] = action
+    state["num_tool_calls"] = state.get("num_tool_calls", 0) + 1
+    state["path"].append("rate_outlook_agent")
+    return state
+
 # Agent #3
 def calculator_agent(state: State) -> dict:
-    """Agent intakes the user's current principal and interest payment as well as a calculated estimated principal 
-    and interest payment based their loan amount. The agent will get a difference in payment (savings) between the current
-    and estimated payment. The estimated closing costs will also be calculated. The estimated closing costs divided by savings is the break even
-    calculation that will be displayed."""
+    """Builds the standard refinance scenario set DETERMINISTICALLY (no LLM math):
+    'Keep your current payoff date' (same remaining term), a 30-year reset, and a 15-year
+    payoff. Resolves the remaining term (user value, else solved from the current payment,
+    else 30), closing costs (quote or ~2% default), and stay-horizon (default) so the
+    3-field flow still works. Seeds the 'primary' metric values from the keep-payoff
+    scenario; the strategy agent overrides them with the recommended structure."""
+    balance = state["mortgage_balance"]
+    current_payment = state["current_payment"]
+    market_rate = state["market_rate"]
 
-    prompt = PromptTemplate(
-    input_variables=["current_payment", "mortgage_balance", "market_rate"],
-    template="""
-    You are an expert on calculating new mortgage payments and break-even points.
+    remaining_term = state.get("remaining_term_years")
+    if not remaining_term:
+        remaining_term = estimate_remaining_term_years(balance, current_payment, state["interest_rate"])
+    if not remaining_term or remaining_term <= 0:
+        remaining_term = 30.0
+    state["remaining_term_years"] = round(remaining_term, 1)
 
-    You MUST call the tool `calculate_estimates_and_breakeven_for_agent` 
-    and pass it exactly these three arguments:
+    horizon = state.get("stay_horizon_years") or DEFAULT_STAY_HORIZON_YEARS
+    state["stay_horizon_years"] = horizon
+    closing_costs = resolve_closing_costs(state.get("closing_costs"), balance)
+    state["closing_costs"] = round(closing_costs, 2)
 
-    - current_payment: {current_payment}
-    - mortgage_balance: {mortgage_balance}
-    - market_rate: {market_rate}
+    scenarios = build_refinance_scenarios(balance, current_payment, market_rate,
+                                          remaining_term, closing_costs, horizon)
+    state["scenarios"] = scenarios
 
-    Your ONLY job is to call the tool with:
+    if scenarios:
+        primary = scenarios[0]
+        state["new_payment"] = primary["new_payment"]
+        state["monthly_savings"] = primary["monthly_savings"]
+        state["break_even"] = primary["break_even"]
+        state["lifetime_interest_delta"] = primary["lifetime_interest_delta"]
+        state["breaks_even_within_horizon"] = primary["breaks_even_within_horizon"]
+        state["recommended_scenario_label"] = primary["label"]
 
-    {{
-        "current_payment": {current_payment},
-        "mortgage_balance": {mortgage_balance},
-        "market_rate": {market_rate}
-    }}
-
-    After the tool returns, output ONLY valid JSON of the form:
-    {{
-        "new_payment": <float>,
-        "monthly_savings": <float>,
-        "break_even": <float>
-    }}
-    """
-    )
-    final_prompt = prompt.invoke({
-        "current_payment": state['current_payment'],
-        "mortgage_balance": state['mortgage_balance'],
-        "market_rate": state['market_rate']
-        })
-    
-    resp = llm_with_tools.invoke(final_prompt)
-
-    # Check if LLM wants to call tools
-    if resp.tool_calls:
-        # Execute the call to tool
-        tool_result = tool_nodes.invoke({"messages": [resp]})
-        values = json.loads(tool_result["messages"][0].content)
-        print("===SUCCESSFULLY EXECUTED CALCULATOR AGENT TOOL CALL===")
-    else:
-        values=[0,0,0]
-
-    state['new_payment'] = values[0]
-    state['monthly_savings'] = values[1]
-    state['break_even'] = values[2]
+    print("===SUCCESSFULLY EXECUTED CALCULATOR AGENT (scenarios built)===")
     state["num_tool_calls"] = state.get("num_tool_calls", 0) + 1
     state["path"].append("calculator_agent")
+    return state
+
+# Agent #3b
+def strategy_agent(state: State) -> dict:
+    """Reasons over the pre-computed scenarios + the user's stay-horizon to RECOMMEND a
+    loan structure, explicitly weighing monthly savings against the lifetime-interest
+    tradeoff (the term-reset trap). The math is deterministic (calculator_agent built it);
+    this agent only selects and explains. One LLM call; falls back to the first scenario."""
+    scenarios = state.get("scenarios") or []
+    if not scenarios:
+        state["path"].append("strategy_agent")
+        return state
+
+    horizon = state.get("stay_horizon_years") or DEFAULT_STAY_HORIZON_YEARS
+    labels = [s["label"] for s in scenarios]
+    prompt = f"""You are a mortgage refinance strategist. The numbers below are ALREADY
+computed; do NOT recompute them. Pick the single best loan structure for this borrower.
+
+Borrower's current rate: {state['interest_rate']}%
+Plans to keep the home for about {horizon} years.
+
+Scenarios (JSON):
+{json.dumps(scenarios, indent=2)}
+
+Guidance:
+- "monthly_savings" is the monthly P&I reduction; "lifetime_interest_delta" is the change
+  in total interest over the life of the loan (POSITIVE means the refi COSTS more interest
+  overall, even if the monthly payment drops -- the term-reset trap).
+- "break_even" is months to recoup closing costs; it only matters if it is within the
+  borrower's {horizon}-year horizon.
+- Prefer a structure that lowers the monthly payment WITHOUT ballooning lifetime interest,
+  unless the borrower's short horizon makes lifetime interest largely irrelevant.
+
+Respond with ONLY valid JSON:
+{{"recommended_label": "<one of: {labels}>", "rationale": "<one sentence>"}}"""
+
+    chosen, rationale = scenarios[0], ""
+    try:
+        resp = llm.invoke(prompt)
+        data = json.loads(_extract_json(resp.content))
+        rationale = data.get("rationale", "") or ""
+        match = next((s for s in scenarios if s["label"] == data.get("recommended_label")), None)
+        if match:
+            chosen = match
+        print("===SUCCESSFULLY EXECUTED STRATEGY AGENT===")
+    except Exception:
+        pass
+
+    state["recommended_scenario_label"] = chosen["label"]
+    state["strategy_rationale"] = rationale
+    state["new_payment"] = chosen["new_payment"]
+    state["monthly_savings"] = chosen["monthly_savings"]
+    state["break_even"] = chosen["break_even"]
+    state["lifetime_interest_delta"] = chosen["lifetime_interest_delta"]
+    state["breaks_even_within_horizon"] = chosen["breaks_even_within_horizon"]
+    state["num_tool_calls"] = state.get("num_tool_calls", 0) + 1
+    state["path"].append("strategy_agent")
     return state
 
 # Agent #4
@@ -177,7 +295,17 @@ def finalizer_agent(state: State) -> dict:
                                              "treasury_timing_label",
                                              "treasury_direction",
                                              "mortgage_treasury_spread",
-                                             "spread_label"],
+                                             "spread_label",
+                                             "remaining_term_years",
+                                             "stay_horizon_years",
+                                             "scenarios_text",
+                                             "recommended_scenario_label",
+                                             "strategy_rationale",
+                                             "lifetime_interest_delta",
+                                             "breaks_even_within_horizon",
+                                             "rate_outlook_label",
+                                             "rate_outlook_summary",
+                                             "rate_outlook_action"],
                               template=FINALIZER_PROMPT)
                             # template="""You are a mortgage refinance expert who should make the final recommendation 
                             # to the user if they should refinance or not. You should make your recommendation within 5-8
@@ -237,6 +365,16 @@ def finalizer_agent(state: State) -> dict:
         treasury_direction=state['treasury_direction'],
         mortgage_treasury_spread=state['mortgage_treasury_spread'],
         spread_label=state['spread_label'],
+        remaining_term_years=state.get('remaining_term_years'),
+        stay_horizon_years=state.get('stay_horizon_years'),
+        scenarios_text=_format_scenarios_for_prompt(state.get('scenarios')),
+        recommended_scenario_label=state.get('recommended_scenario_label') or "n/a",
+        strategy_rationale=state.get('strategy_rationale') or "",
+        lifetime_interest_delta=state.get('lifetime_interest_delta'),
+        breaks_even_within_horizon=state.get('breaks_even_within_horizon'),
+        rate_outlook_label=state.get('rate_outlook_label') or "unavailable",
+        rate_outlook_summary=state.get('rate_outlook_summary') or "",
+        rate_outlook_action=state.get('rate_outlook_action') or "neutral",
     )
 
     response = llm_finalizer.invoke(final_prompt)
