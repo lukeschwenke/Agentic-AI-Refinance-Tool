@@ -41,7 +41,7 @@ def lambda_handler(event, context):
 
             # Send the email!
             publish_sns(
-                "Refi with Agentic AI: Daily Recommendation!",
+                "RefiAI: Daily Recommendation",
                 f"{recommendation}"
             )
 
@@ -50,14 +50,14 @@ def lambda_handler(event, context):
     except urllib.error.HTTPError as e:
         error_body = e.read().decode("utf-8", errors="replace")
         publish_sns(
-            "Refi Agentic AI: Daily POST FAILED (HTTPError)",
+            "RefiAI: Daily POST FAILED (HTTPError)",
             f"HTTP status: {e.code}\nResponse (first 2000 chars):\n{error_body[:2000]}",
         )
         raise
 
     except Exception as e:
         publish_sns(
-            "Refi Agentic AI: Daily POST FAILED (Exception)",
+            "RefiAI: Daily POST FAILED (Exception)",
             f"Error: {repr(e)}",
         )
         raise

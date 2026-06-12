@@ -1,16 +1,18 @@
 from core.define_state_and_llm import State
 from langgraph.graph import StateGraph, END
 from core.agents import *
-from IPython.display import Image
-from io import BytesIO
-from PIL import Image as PILImage
 
 
 def condition(state: State) -> str:
-    if state["market_rate"] > state["interest_rate"]:
+    market_rate = state["market_rate"] or 0.0
+    # Both rate sources failed: there is nothing valid to analyze, so skip straight
+    # to the finalizer (which reports that live rates couldn't be retrieved) instead
+    # of letting the calculator build scenarios against a 0% market rate.
+    if market_rate <= 0:
         return "END"
-    else:
-        return "CONTINUE"
+    if market_rate > state["interest_rate"]:
+        return "END"
+    return "CONTINUE"
 
 workflow = StateGraph(State)
 workflow.add_node("market", market_expert_agent)
@@ -31,12 +33,4 @@ workflow.add_edge("calculator", "strategy")
 workflow.add_edge("strategy", "finalizer")
 workflow.add_edge("finalizer", END)
 
-app=workflow.compile()
-
-# Generate the visual graph
-# workflow_image = None
-# try:
-#     png_bytes = app.get_graph().draw_mermaid_png()
-#     workflow_image = PILImage.open(BytesIO(png_bytes))
-# except Exception:
-#     workflow_image = None
+app = workflow.compile()

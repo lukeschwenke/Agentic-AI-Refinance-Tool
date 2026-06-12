@@ -1,7 +1,5 @@
 from typing import TypedDict, List
 from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
-from core.tools import *
 import os
 from dotenv import load_dotenv
 
@@ -53,14 +51,7 @@ llm_finalizer = ChatOpenAI(model=os.getenv("OPENAI_FINALIZER_MODEL_NAME", "gpt-5
                             api_key=os.getenv("OPENAI_API_KEY"),
                             temperature=0.1)
 
-# #Ollama Support
-# llm = ChatOllama(model="gpt-oss:20b",
-#                  temperature=0.1)
-# Start ollam model
-# OLLAMA_HOST=127.0.0.1:11435 ollama serve
-
-llm_with_tools = llm.bind_tools([get_treasury_10yr_yield_for_agent,
-                                 get_rates_search_tool_for_agent,
-                                 get_rate_outlook_search_for_agent,
-                                 get_local_credit_union_30yr_rate_for_agent,
-                                 calculate_estimates_and_breakeven_for_agent])
+# Ollama support (uncomment to run a local model instead of OpenAI):
+# from langchain_ollama import ChatOllama
+# llm = ChatOllama(model="gpt-oss:20b", temperature=0.1)
+# Start the model first: OLLAMA_HOST=127.0.0.1:11435 ollama serve

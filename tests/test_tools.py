@@ -16,6 +16,7 @@ from core.tools import (
     build_scenario,
     build_refinance_scenarios,
     get_rate_outlook_search,
+    parse_rate_from_text,
     DEFAULT_CLOSING_COST_PCT,
 )
 
@@ -285,6 +286,18 @@ def test_build_refinance_scenarios_dedupes_when_remaining_near_30():
     terms = [round(s["term_years"]) for s in scenarios]
     assert terms.count(30) == 1                     # 'keep payoff' (30) merged with the 30-yr reset
     assert 15 in terms                              # 15-yr option still present
+
+
+@pytest.mark.calculation
+def test_parse_rate_from_text():
+    """Pulls the first plausible mortgage rate out of free text; 0.0 when none."""
+    assert parse_rate_from_text("6.55") == 6.55
+    assert parse_rate_from_text("The average rate is 6.62% as of June 2026.") == 6.62
+    # Out-of-range decimals (0.12) are skipped in favor of the plausible one.
+    assert parse_rate_from_text("rates rose 0.125 points to 6.74% this week") == 6.74
+    # Integers like "30" (year terms) never match; no decimals -> 0.0.
+    assert parse_rate_from_text("30-year mortgage rates held steady") == 0.0
+    assert parse_rate_from_text("no numbers here") == 0.0
 
 
 @pytest.mark.rate_outlook

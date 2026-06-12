@@ -1,14 +1,45 @@
 import re
 import math
+import time
+import functools
 import requests
-from langchain_core.tools import tool
 from tavily import TavilyClient
 import os
 from dotenv import load_dotenv
-from pydantic import BaseModel
 
 
 load_dotenv()
+
+
+def _with_retries(call, attempts=3, backoff_seconds=0.5):
+    """Run a zero-arg callable, retrying transient failures with linear backoff.
+    Re-raises the last exception so callers' degrade-to-unavailable handling still works."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except Exception:
+            if attempt == attempts:
+                raise
+            time.sleep(backoff_seconds * attempt)
+
+
+MARKET_DATA_TTL_SECONDS = 15 * 60
+
+
+def _ttl_cache(fn):
+    """Cache a zero-arg fetcher's successful result for MARKET_DATA_TTL_SECONDS.
+    Rates don't move minute-to-minute, and demo visitors repeat requests — this cuts
+    latency, Tavily cost, and exposure to source flakiness. Failures are never cached."""
+    cached = {"at": 0.0, "value": None}
+
+    @functools.wraps(fn)
+    def wrapper():
+        if cached["value"] is not None and time.time() - cached["at"] < MARKET_DATA_TTL_SECONDS:
+            return cached["value"]
+        value = fn()
+        cached["at"], cached["value"] = time.time(), value
+        return value
+    return wrapper
 
 TREASURY_QUOTE_URL = "https://quote.cnbc.com/quote-html-webservice/quote.htm"
 TREASURY_USER_AGENT = (
@@ -42,9 +73,9 @@ def _is_pos(v) -> bool:
     return isinstance(v, (int, float)) and v > 0
 
 
-#@tool
+@_ttl_cache
 def get_treasury_10yr_quote() -> dict:
-    """Fetch the 10-year Treasury quote from CNBC.
+    """Fetch the 10-year Treasury quote from CNBC (retried, cached ~15 min).
 
     Returns {"last", "yr_high", "yr_low", "prev_close"} as floats. `last` is
     required (raises ValueError if the payload is malformed); the 52-week high/low
@@ -55,9 +86,14 @@ def get_treasury_10yr_quote() -> dict:
         "noform": "1", "partnerId": "2", "fund": "1", "exthrs": "0",
         "output": "json", "symbols": "US10Y",
     }
-    resp = requests.get(TREASURY_QUOTE_URL, params=params,
-                        headers={"User-Agent": TREASURY_USER_AGENT}, timeout=8)
-    resp.raise_for_status()
+
+    def _fetch():
+        r = requests.get(TREASURY_QUOTE_URL, params=params,
+                         headers={"User-Agent": TREASURY_USER_AGENT}, timeout=8)
+        r.raise_for_status()
+        return r
+
+    resp = _with_retries(_fetch)
     data = resp.json()
 
     try:
@@ -82,7 +118,6 @@ def get_treasury_10yr_quote() -> dict:
     }
 
 
-#@tool
 def get_treasury_10yr_yield() -> float:
     """Gets the 10 year treasury yield value (the latest yield)."""
     return get_treasury_10yr_quote()["last"]
@@ -137,13 +172,26 @@ def classify_rate_timing(treasury_yield, yr_high, yr_low, prev_close, mortgage_r
 
     return result
 
-#@tool
-def get_rates_search_tool() -> str:
-    """Get the average mortgage interest rate."""
+RATE_MIN, RATE_MAX = 2.0, 12.0
 
+
+def parse_rate_from_text(text: str) -> float:
+    """Pull the first plausible mortgage-rate percentage (RATE_MIN-RATE_MAX) out of
+    free text, e.g. a search answer like 'The average rate is 6.62% as of...'.
+    Returns 0.0 if no in-range decimal number is found."""
+    for match in re.findall(r"\d{1,2}\.\d{1,3}", str(text)):
+        value = float(match)
+        if RATE_MIN <= value <= RATE_MAX:
+            return value
+    return 0.0
+
+
+@_ttl_cache
+def get_rates_search_tool() -> str:
+    """Get the average mortgage interest rate (Tavily answer text; retried, cached ~15 min)."""
     tavily_client = TavilyClient(api_key=os.getenv('TAVILY_API_KEY'))
 
-    response = tavily_client.search(
+    response = _with_retries(lambda: tavily_client.search(
         query="""What is the current average 30-year fixed mortgage interest rate people in the United States are receiving?" \
         "Provide the answer as a number with 2 decimal places. E.g., 6.55.
         ONLY provide the number without any additional text.""",
@@ -151,18 +199,20 @@ def get_rates_search_tool() -> str:
         search_depth="basic",
         max_results=3,
         time_range="day",
-        include_answer=True #Include an LLM-generated answer to the provided query. 
-    )
+        include_answer=True #Include an LLM-generated answer to the provided query.
+    ))
 
     answer = response["answer"]
     return answer
 
 
+@_ttl_cache
 def get_rate_outlook_search() -> str:
     """Near-term outlook for US 30-year fixed mortgage rates (Fed signals + forecaster
-    commentary) via a Tavily finance search. Returns the LLM-generated answer text."""
+    commentary) via a Tavily finance search (retried, cached ~15 min). Returns the
+    LLM-generated answer text."""
     tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-    response = tavily_client.search(
+    response = _with_retries(lambda: tavily_client.search(
         query=("Over the next few months, are US 30-year fixed mortgage rates expected to "
                "rise, fall, or hold steady? What are the Federal Reserve and forecasters "
                "signaling? Answer briefly."),
@@ -171,7 +221,7 @@ def get_rate_outlook_search() -> str:
         max_results=4,
         time_range="week",
         include_answer=True,
-    )
+    ))
     return response["answer"]
 
 
@@ -229,18 +279,22 @@ def parse_conforming_30yr_avg(html: str) -> float:
     return sum(rates) / len(rates)
 
 
+@_ttl_cache
 def get_local_credit_union_30yr_rate() -> float:
     """Fetch the local credit union's Conforming 30-Year Fixed rate (average of the
-    listed rows). The institution-specific URL is read from LOCAL_CREDIT_UNION_RATES_URL
-    so the source is not hardcoded. Raises ValueError on any failure (missing env var,
-    network error, or parse failure)."""
+    listed rows; retried, cached ~15 min). The institution-specific URL is read from
+    LOCAL_CREDIT_UNION_RATES_URL so the source is not hardcoded. Raises ValueError on
+    any failure (missing env var, network error, or parse failure)."""
     url = os.getenv("LOCAL_CREDIT_UNION_RATES_URL")
     if not url:
         raise ValueError("LOCAL_CREDIT_UNION_RATES_URL is not set")
 
-    resp = requests.get(url, headers={"User-Agent": LOCAL_CU_USER_AGENT}, timeout=8)
-    resp.raise_for_status()
-    return parse_conforming_30yr_avg(resp.text)
+    def _fetch():
+        r = requests.get(url, headers={"User-Agent": LOCAL_CU_USER_AGENT}, timeout=8)
+        r.raise_for_status()
+        return r
+
+    return parse_conforming_30yr_avg(_with_retries(_fetch).text)
 
 
 # --- Refinance calculation defaults (tunable; see the scenarios/strategy spec) ---
@@ -346,55 +400,6 @@ def calculate_estimates_and_breakeven(current_payment: float,
     monthly_savings = current_payment - new_pmt
     break_even = costs / monthly_savings if monthly_savings > 0 else None
     return new_pmt, monthly_savings, break_even
-
-# Define the tools for the agents to use using LangChains tool decorate
-# It needs to be done this way because PyTest will throw an error if @tool is present 
-# on the function it's testing
-
-@tool
-def get_treasury_10yr_yield_for_agent() -> float:
-    """Gets the 10 year treasury yield value."""
-    return get_treasury_10yr_yield()
-
-@tool
-def get_rates_search_tool_for_agent() -> str:
-    """Get the average mortgage interest rate."""
-    return get_rates_search_tool()
-
-@tool
-def get_rate_outlook_search_for_agent() -> str:
-    """Get the near-term outlook for 30-year fixed mortgage rates."""
-    return get_rate_outlook_search()
-
-@tool
-def get_local_credit_union_30yr_rate_for_agent() -> float:
-    """Get the local credit union's (Washington DC area) average 30-year fixed rate."""
-    return get_local_credit_union_30yr_rate()
-
-
-class CalcArgs(BaseModel):
-    current_payment: float
-    mortgage_balance: float
-    market_rate: float
-    term_years: float = 30
-    closing_costs: float | None = None
-
-@tool(args_schema=CalcArgs)
-def calculate_estimates_and_breakeven_for_agent(
-    current_payment: float,
-    mortgage_balance: float,
-    market_rate: float,
-    term_years: float = 30,
-    closing_costs: float | None = None
-) -> tuple[float, float, float | None]:
-    """Calculate the user's estimated new payment, savings, and break-even point."""
-    return calculate_estimates_and_breakeven(
-        current_payment=current_payment,
-        mortgage_balance=mortgage_balance,
-        market_rate=market_rate,
-        term_years=term_years,
-        closing_costs=closing_costs
-    )
 
 if __name__ == "__main__":
     print(get_treasury_10yr_yield())
