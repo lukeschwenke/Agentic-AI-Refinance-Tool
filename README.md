@@ -83,26 +83,36 @@ Counters are stored under keys like `ratelimit#<ip>#<date>` and `ratelimit#globa
 
 ## Agents
 
-Agent implementations live in `src/core/agents.py`. The workflow is a LangGraph `StateGraph` with a **conditional short-circuit**: if the fetched market rate is *higher* than the user's current rate, refinancing makes no sense, so the treasury and calculator steps are skipped and the workflow jumps straight to the finalizer.
+Agent implementations live in `src/core/agents.py`. The guiding principle: **LLMs decide and explain; Python computes** — every number comes from deterministic code, and the LLM calls use structured outputs so their answers are guaranteed valid.
+
+The workflow is a LangGraph `StateGraph` with a **conditional short-circuit**: if the fetched market rate is *higher* than the user's current rate (or live rates couldn't be retrieved at all), there is nothing worth analyzing, so the workflow jumps straight to the finalizer.
 
 ```
-market ──> condition ──> if market_rate > interest_rate: finalizer (END)
-                         else:                            treasury_yield -> calculator -> finalizer
+market ──> condition ──> market rate unavailable OR > interest rate: finalizer (END)
+                         else: treasury_yield -> rate_outlook -> calculator -> strategy -> finalizer
 ```
 
 ### 1. Market Rate Agent
-- Uses Tavily search to retrieve the current average 30-year mortgage rate.
-- Gathers both a **national** rate and a **DC-area local credit union** rate; the lower available rate drives the analysis.
-- A second LLM call extracts the bare numeric value for downstream use.
+- Gathers both a **national average** rate (Tavily search, parsed deterministically) and a **DC-area local credit union** rate (scraped from its published rates).
+- The lower available rate drives the analysis; both are reported to the user.
 
-### 2. Treasury / Benchmark Agent
-- Fetches the U.S. **10-year Treasury yield** as macro-rate context.
+### 2. Treasury / Timing Agent
+- Fetches the U.S. **10-year Treasury yield** plus its 52-week high/low and prior close.
+- Derives relative timing signals: position within the 52-week range, day-over-day direction, and the mortgage-to-Treasury spread vs. the ~1.75% long-run norm. Framed as context, not a gate.
 
-### 3. Calculator Agent
-- Computes the refinance **break-even** from user inputs (interest rate, payment, balance) and cost assumptions.
+### 3. Rate Outlook Agent
+- Searches recent Fed/forecaster commentary and classifies the near-term direction of 30-year rates (**falling / stable / rising**) with a suggested posture (**act / wait / neutral**).
 
-### 4. Finalizer Agent
-- Loads its prompt from `src/prompts/finalizer_prompt.txt` and synthesizes the final, user-facing recommendation, including which rate source drove the math.
+### 4. Calculator Agent
+- Deterministically models several refinance structures — keep-your-payoff-date, 30-year reset, and 15-year — each with new payment, monthly savings, realistic closing costs (~2% default or the user's quote), break-even, **lifetime-interest change**, and whether it breaks even within the user's stay horizon.
+
+### 5. Strategy Agent
+- Reasons over those scenarios to recommend the best structure, explicitly weighing monthly savings against the lifetime-interest tradeoff (the "term-reset trap"); recommends *none* if nothing pencils out.
+
+### 6. Finalizer Agent
+- Loads its prompt from `src/prompts/finalizer_prompt.txt` and synthesizes the final, user-facing recommendation. All numbers and the verdict branch are precomputed and pre-formatted in Python — the LLM only narrates.
+
+External fetches (CNBC, the credit union page, Tavily) are retried with backoff and cached for ~15 minutes, and a request that finds no usable market rate degrades to an honest "couldn't retrieve live rates" response instead of a fabricated analysis.
 
 ---
 
@@ -117,29 +127,39 @@ market ──> condition ──> if market_rate > interest_rate: finalizer (END)
 **Recommendation Endpoint**
 - `POST /refinance_agent/recommendation`
 
-Example request:
+Example request (only the first three fields are required — the rest default sensibly):
 ```json
 {
   "interest_rate": 6.5,
   "current_payment": 5243.26,
   "mortgage_balance": 768000,
-  "client_ip": "203.0.113.42"
+  "client_ip": "203.0.113.42",
+  "remaining_term_years": 22,
+  "stay_horizon_years": 7,
+  "closing_costs": 12000
 }
 ```
 
 `client_ip` is optional — the Streamlit UI sends the visitor's IP (from the `X-Forwarded-For` header set by Caddy) so the API can enforce per-IP limits. Requests without it (e.g. the scheduled Lambda) skip rate limiting.
 
-Example response:
+Example response (abridged):
 ```json
 {
-  "recommendation": "Refinancing now would lower your payment by ...",
+  "recommendation": "**Refinancing looks worthwhile.** ...",
   "market_rate": 5.875,
   "treasury_yield": 4.21,
-  "num_tool_calls": 3,
-  "path": ["market", "treasury_yield", "calculator", "finalizer"],
+  "num_tool_calls": 4,
+  "path": ["market_expert_agent", "treasury_yield_agent", "rate_outlook_agent",
+           "calculator_agent", "strategy_agent", "finalizer_agent"],
   "new_payment": 4892.10,
   "monthly_savings": 351.16,
-  "break_even": 14.2
+  "break_even": 14.2,
+  "scenarios": [{"label": "Keep your current payoff date", "...": "..."}],
+  "recommended_scenario_label": "Keep your current payoff date",
+  "lifetime_interest_delta": -127248.78,
+  "rate_outlook_label": "stable",
+  "rate_outlook_summary": "Rates are expected to hold mostly steady...",
+  "rate_outlook_action": "neutral"
 }
 ```
 

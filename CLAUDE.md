@@ -26,13 +26,15 @@ poetry run uvicorn api.api_setup:app --host 127.0.0.1 --port 8000 --reload
 make push-ecr            # login-ecr + buildx build --push
 make full-deploy-prod    # push-ecr + connect to EC2
 
-# Tests (pytest markers: treasury, interest_rate, calculation):
-poetry run pytest                              # all tests
-poetry run pytest tests/test_tools.py -s       # tool tests (hit LIVE endpoints), -s shows prints
-poetry run pytest tests/test_tools.py -m treasury -s   # single marked test
+# Tests (pytest markers: treasury, interest_rate, rate_outlook, local_cu = LIVE;
+# calculation = offline math; finalizer_eval = live-LLM prompt evals, opt-in):
+poetry run pytest -m calculation               # offline unit tests (fast, no network)
+poetry run pytest tests/test_workflow.py       # offline graph-path tests (LLMs stubbed)
+poetry run pytest tests/test_tools.py -m treasury -s   # single live marked test
+poetry run pytest -m finalizer_eval -s         # live finalizer prompt evals (costs LLM calls)
 ```
 
-Note: `tests/test_tools.py` makes **live** calls to CNBC and Tavily, so it needs network access and `TAVILY_API_KEY`. `tests/test_api_server.py` is an interactive script (prompts via `input()`, posts to a running API) — not a standard pytest test.
+Note: the live-marked tests call CNBC and Tavily, so they need network access and `TAVILY_API_KEY`. `scripts/test_api_server.py` is an interactive script (prompts via `input()`, posts to a running API) — not a pytest test.
 
 ## Environment
 
@@ -44,27 +46,29 @@ Request flow: **Streamlit UI** ([src/frontend/RefiAI_Main_Page.py](src/frontend/
 
 ### The LangGraph workflow ([src/core/workflow.py](src/core/workflow.py))
 
-A `StateGraph` over the `State` TypedDict ([src/core/define_state_and_llm.py](src/core/define_state_and_llm.py)) with four nodes and one **conditional short-circuit**:
+A `StateGraph` over the `State` TypedDict ([src/core/define_state_and_llm.py](src/core/define_state_and_llm.py)) with six nodes and one **conditional short-circuit**:
 
 ```
-market ──> condition ──> if market_rate > interest_rate: finalizer (END)
-                         else:                            treasury_yield -> calculator -> finalizer
+market ──> condition ──> market_rate unavailable (<= 0) OR > interest_rate: finalizer (END)
+                         else: treasury_yield -> rate_outlook -> calculator -> strategy -> finalizer
 ```
 
-The key control-flow rule: if the fetched market rate is *higher* than the user's current rate, refinancing makes no sense, so the workflow skips the treasury and calculator agents and goes straight to `finalizer`. In that path `treasury_yield`/`new_payment`/etc. stay `None`/`0`, and the finalizer prompt is written to handle those zero values.
+Two control-flow rules: (1) if the fetched market rate is *higher* than the user's current rate, refinancing makes no sense; (2) if **both** rate sources failed (`market_rate <= 0`), there is nothing valid to analyze. Either way the workflow jumps straight to `finalizer`, downstream state stays `None`/empty, and the finalizer's precomputed `decision_hint` makes it report honestly (DO_NOT_REFINANCE vs RATES_UNAVAILABLE).
 
 ### Agents ([src/core/agents.py](src/core/agents.py))
 
-Each agent is a plain function `(State) -> State` that mutates and returns shared state (`market_rate`, `treasury_yield`, `new_payment`, `monthly_savings`, `break_even`, `path`, `num_tool_calls`, `recommendation`). Agents do **not** use a prebuilt agent/tool loop — they manually `llm_with_tools.invoke(prompt)`, check `resp.tool_calls`, and execute via a shared `ToolNode` (`tool_nodes.invoke({"messages": [resp]})`), then parse the tool result text. When extending an agent, follow this same manual pattern and remember to append to `state["path"]` and bump `state["num_tool_calls"]`.
+Each agent is a plain function `(State) -> State` that mutates and returns shared state. The design rule: **LLMs decide and explain; Python computes.** Every number comes from deterministic code in [tools.py](src/core/tools.py); LLM calls are single-shot and, where they return data, use `llm.with_structured_output(<Pydantic model>)` so values are guaranteed valid (see `RateOutlookRead`, `StrategyPick`). When extending an agent: append to `state["path"]`, and bump `state["num_tool_calls"]` **only for successful external data fetches** (it is a fetch counter, not a step counter).
 
-- `market_expert_agent` — Tavily search for current avg 30-yr rate; a second LLM call extracts the bare numeric value.
-- `treasury_yield_agent` — fetches 10-yr Treasury yield.
-- `calculator_agent` — calls the break-even tool; expects JSON-parseable tuple output.
-- `finalizer_agent` — loads its prompt from [src/prompts/finalizer_prompt.txt](src/prompts/finalizer_prompt.txt) and writes the final recommendation.
+- `market_expert_agent` — two deterministic sources: Tavily answer parsed by `parse_rate_from_text` (LLM extraction only as fallback) + the local credit union scrape; lower non-zero rate wins (`consolidate_rates`).
+- `treasury_yield_agent` — CNBC quote (yield + 52-wk hi/lo + prev close) → `classify_rate_timing` range/direction/spread labels. No LLM.
+- `rate_outlook_agent` — Tavily search of Fed/forecaster commentary → structured classification (falling/stable/rising, act/wait/neutral).
+- `calculator_agent` — builds the scenario set deterministically via `build_refinance_scenarios` (keep-payoff-date / 30-yr reset / 15-yr), resolving defaults (term solved from the payment, ~2% closing costs, 7-yr horizon). No LLM.
+- `strategy_agent` — one structured LLM call that picks a scenario (or "none") and explains; copies the pick's numbers into the primary state fields.
+- `finalizer_agent` — loads [src/prompts/finalizer_prompt.txt](src/prompts/finalizer_prompt.txt); **all values are pre-formatted in Python** (`_fmt_*` helpers) and the verdict branch is precomputed (`_decision_hint`) so the LLM only narrates — never recompute or reformat numbers in the prompt.
 
-### Tools ([src/core/tools.py](src/core/tools.py)) — dual definitions
+### Tools ([src/core/tools.py](src/core/tools.py))
 
-Every tool exists **twice**: a plain function (e.g. `get_treasury_10yr_yield`) and a `@tool`-decorated wrapper that just calls it (e.g. `get_treasury_10yr_yield_for_agent`). This split is intentional — pytest cannot call the `@tool`-wrapped versions directly, so tests import the plain functions while agents bind the `_for_agent` variants. If you add a tool, add both versions and register the `_for_agent` one in the `ToolNode` lists in both [agents.py](src/core/agents.py) and [define_state_and_llm.py](src/core/define_state_and_llm.py).
+Plain functions only (the old `@tool`/`ToolNode` layer was removed when the agents went deterministic). The three live fetchers (CNBC, credit union page, Tavily searches) are wrapped with `_with_retries` (3 attempts, linear backoff) and `_ttl_cache` (~15 min) — failures are never cached. Pure math (`monthly_payment`, `build_refinance_scenarios`, `classify_rate_timing`, `parse_rate_from_text`, etc.) is fully unit-tested offline via the `calculation` marker.
 
 ### Gotchas
 

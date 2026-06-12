@@ -1,4 +1,3 @@
-from enum import Enum
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -6,8 +5,8 @@ from core.workflow import app as graph_app
 from dotenv import load_dotenv
 import logging
 import traceback
-from datetime import datetime, timezone
-import os, json, time, uuid
+from datetime import datetime
+import uuid
 from core.db_logging import (
     log_event,
     increment_ip_usage,
@@ -49,6 +48,11 @@ class RefiAdviceResponse(BaseModel):
     rate_outlook_label: Optional[str] = None
     rate_outlook_summary: Optional[str] = None
     rate_outlook_action: Optional[str] = None
+    # Resolved assumptions (user-provided or defaulted/derived by the calculator),
+    # echoed back so the UI can show exactly what the math assumed.
+    remaining_term_years: Optional[float] = None
+    stay_horizon_years: Optional[float] = None
+    closing_costs: Optional[float] = None
 
 # ----- Helpers -----
 def extract_text(value) -> str:
@@ -155,6 +159,9 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
             rate_outlook_label=result.get("rate_outlook_label") or None,
             rate_outlook_summary=result.get("rate_outlook_summary") or None,
             rate_outlook_action=result.get("rate_outlook_action") or None,
+            remaining_term_years=result.get("remaining_term_years", None),
+            stay_horizon_years=result.get("stay_horizon_years", None),
+            closing_costs=result.get("closing_costs", None),
             )
         
         print("POST Request Successful!")

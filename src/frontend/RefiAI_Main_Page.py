@@ -23,7 +23,7 @@ hero(
         "10-year Treasury yield, and your personal break-even — then gives you a "
         "straight answer."
     ),
-    pills=["🌐 National + DC-area rates", "📊 Break-even analysis", "⚡ Real-time market data"],
+    pills=["National + DC-area rates", "Break-even analysis", "Real-time market data"],
     badge="Live market intelligence",
 )
 
@@ -122,7 +122,18 @@ if run:
             st.error("Please enter valid numbers only.")
             st.stop()
 
-        with st.spinner("RefiAI agents are analyzing live market data..."):
+        # Soft sanity checks: warn about likely typos but never block the request.
+        if not 1.0 <= rate <= 15.0:
+            st.warning(f"A {rate:g}% rate is unusual — most mortgage rates fall between 2% and 10%. Double-check it.")
+        if mortgage_balance < 10_000:
+            st.warning("That balance looks low — double-check you entered the full remaining amount.")
+        elif current_payment <= mortgage_balance * (rate / 100) / 12:
+            st.warning(
+                "That payment doesn't cover the monthly interest at this rate, so parts of the "
+                "estimate may be off. Double-check the payment (principal & interest only)."
+            )
+
+        with st.spinner("Checking live rates, Treasury data, and the rate outlook — usually 20–40 seconds..."):
             st.session_state.resp = get_recommendation(
                 rate, current_payment, mortgage_balance, client_ip=client_ip(),
                 remaining_term_years=remaining_term_years,
@@ -146,12 +157,26 @@ if resp:
         c1.metric("Effective market rate", fmt_pct(resp.get("market_rate")))
         c2.metric("New payment (est.)", fmt_money(resp.get("new_payment")))
         c3.metric("Monthly savings", fmt_money(resp.get("monthly_savings")))
-        c4.metric("Break-even (mo)", fmt_months(resp.get("break_even")))
+        c4.metric("Break-even", fmt_months(resp.get("break_even")))
+
+        # Show exactly what the math assumed, flagging anything that was defaulted or
+        # derived rather than typed in (the inputs persist in session_state by key).
+        rt, sh, cc = resp.get("remaining_term_years"), resp.get("stay_horizon_years"), resp.get("closing_costs")
+        if isinstance(rt, (int, float)) and isinstance(sh, (int, float)) and isinstance(cc, (int, float)):
+            term_given = bool(st.session_state.get("term_in", "").strip())
+            horizon_given = bool(st.session_state.get("horizon_in", "").strip())
+            closing_given = bool(st.session_state.get("closing_in", "").strip())
+            st.caption(
+                f"Assumes {fmt_money(cc)} in closing costs{'' if closing_given else ' (2% default)'}, "
+                f"{rt:g} years left on your loan{'' if term_given else ' (estimated from your payment)'}, "
+                f"and a {sh:g}-year stay{'' if horizon_given else ' (default)'}. "
+                "Open Advanced details to adjust these."
+            )
 
         outlook = resp.get("rate_outlook_label")
         if outlook and outlook != "unavailable":
             summary = resp.get("rate_outlook_summary") or ""
-            st.caption(f"📈 Rate outlook: **{outlook}** — {summary}")
+            st.caption(f"Rate outlook: **{outlook}** — {summary}")
 
         st.write("")
         # Render the LLM's Markdown (bold/bullets/headers). Escape $ so Streamlit doesn't
@@ -189,25 +214,37 @@ if resp:
             rows = []
             for s in scenarios:
                 be = s.get("break_even")
+                label = str(s.get("label", ""))
+                if s.get("label") == rec_label:
+                    label += "  ·  Recommended"
                 rows.append({
-                    "Structure": ("⭐ " if s.get("label") == rec_label else "") + str(s.get("label", "")),
+                    "Structure": label,
                     "Term": f"{s.get('term_years', 0):g} yr",
                     "New payment": fmt_money(s.get("new_payment")),
                     "Monthly savings": fmt_money(s.get("monthly_savings")),
                     "Break-even": f"{be:.0f} mo" if isinstance(be, (int, float)) else "—",
-                    "Lifetime interest Δ": fmt_signed_money(s.get("lifetime_interest_delta")),
+                    "Lifetime interest change": fmt_signed_money(s.get("lifetime_interest_delta")),
                 })
             st.dataframe(rows, hide_index=True, use_container_width=True)
             st.caption(
-                "⭐ = recommended.  **Lifetime interest Δ**: **+** means the refi adds total interest "
-                "over the loan's life (even if the monthly payment drops); **−** means it saves interest too."
+                "**Lifetime interest change**: **+** means the refi adds total interest over the "
+                "loan's life (even if the monthly payment drops); **−** means it saves interest too."
             )
 
         with st.expander("Agent run details"):
-            st.metric("Agentic tool calls", resp.get("num_tool_calls", "-"))
-            st.caption("The path this agentic workflow took:")
-            path = resp.get("path", "-")
-            st.code(" → ".join(path) if isinstance(path, list) else str(path))
+            FRIENDLY_STEPS = {
+                "market_expert_agent": "Market rates",
+                "treasury_yield_agent": "Treasury context",
+                "rate_outlook_agent": "Rate outlook",
+                "calculator_agent": "Scenario math",
+                "strategy_agent": "Strategy",
+                "finalizer_agent": "Final write-up",
+            }
+            path = resp.get("path", [])
+            steps = [FRIENDLY_STEPS.get(p, p) for p in path] if isinstance(path, list) else [str(path)]
+            st.caption("The steps the agents took:")
+            st.code(" → ".join(steps))
+            st.caption(f"Live data fetches: {resp.get('num_tool_calls', '-')}")
 
 footer()
 
