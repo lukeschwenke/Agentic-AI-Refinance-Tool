@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from ui import apply_theme, hero, footer, fmt_pct, fmt_money, fmt_months
 
 st.set_page_config(page_title="RefiAI", page_icon="🏡")
@@ -33,6 +34,22 @@ if "resp" not in st.session_state:
 
 def clean_strings(text: str) -> str:
     return text.strip().replace("%", "").replace("$", "").replace(",", "")
+
+
+def colorize_verdict(md: str) -> str:
+    """Tint the opening verdict line and the 'Bottom line:' in the theme's primary
+    (emerald) color using Streamlit's :primary[...] markdown directive."""
+    lines = md.split("\n")
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s:
+            lines[i] = f":primary[{s}]"
+            break
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("**Bottom line") or s.startswith("Bottom line"):
+            lines[i] = f":primary[{s}]"
+    return "\n".join(lines)
 
 
 def fmt_signed_money(v) -> str:
@@ -112,6 +129,8 @@ if run:
                 stay_horizon_years=stay_horizon_years,
                 closing_costs=closing_costs,
             )
+        # Scroll to the results once, on the rerun that first shows them.
+        st.session_state.scroll_to_results = True
 
 # ---- Results ----
 resp = st.session_state.resp
@@ -137,9 +156,29 @@ if resp:
         st.write("")
         # Render the LLM's Markdown (bold/bullets/headers). Escape $ so Streamlit doesn't
         # treat dollar amounts as LaTeX math. st.markdown sanitizes raw HTML by default.
-        recommendation = resp.get("recommendation", "-").replace("$", "\\$")
+        recommendation = colorize_verdict(resp.get("recommendation", "-").replace("$", "\\$"))
         with st.container(border=True):
             st.markdown(recommendation)
+
+        if st.session_state.pop("scroll_to_results", False):
+            # components.html runs in an iframe, so reach the parent document to
+            # scroll the freshly rendered verdict into view.
+            components.html(
+                """
+                <script>
+                setTimeout(function () {
+                    const doc = window.parent.document;
+                    for (const h of doc.querySelectorAll("h4")) {
+                        if (h.innerText.includes("Here's the verdict")) {
+                            h.scrollIntoView({behavior: "smooth", block: "start"});
+                            break;
+                        }
+                    }
+                }, 300);
+                </script>
+                """,
+                height=0,
+            )
 
         # ---- Loan structures compared ----
         scenarios = resp.get("scenarios") or []

@@ -303,11 +303,8 @@ def footer():
           <strong>Disclaimer:</strong> RefiAI is a personal demo project for educational purposes.
           It does not provide financial, legal, or tax advice, and nothing on this site is a loan
           offer, quote, or commitment to lend. Rates and calculations may be inaccurate or delayed —
-          consult a licensed professional before making financial decisions.<br>
-          <strong>Privacy:</strong> Mortgage inputs you submit and your IP address are logged to
-          operate and rate-limit this demo. No data is sold or shared with third parties.<br>
-          <strong>Terms:</strong> Provided "as is" without warranty of any kind; use at your own
-          risk. Daily usage limits apply. &copy; 2026 Luke Schwenke.
+          consult a licensed professional before making financial decisions.
+          &copy; 2026 Luke Schwenke.
         </div>
         """,
         unsafe_allow_html=True,

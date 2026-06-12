@@ -12,8 +12,10 @@ digestible — short bullets, bold headers, and bold figures — not a dense par
   - **Will it pay off?** — break-even vs. how long they plan to stay.
   - **Timing (Treasury)** — the yield, its 52-week standing, and the spread; clearly framed as context.
   - **Rate outlook** — the forward-looking view; also context, not a gate.
-- **Bold every key number.** Format money as **$3,412.21** and percentages with up to 3 decimals
-  (e.g. **6.125%**). Keep each bullet to ONE short sentence.
+- Bold SPARINGLY — emphasis only works when it's rare. Bold ONLY: the section mini-headers, the
+  recommended structure name, the monthly savings, the break-even, and the lifetime-interest change.
+  Every other number and word stays unbolded. Format money as $3,412.21 and percentages with up to
+  3 decimals (e.g. 6.125%). Keep each bullet to ONE short sentence.
 - Close with a **Bottom line:** one-sentence takeaway.
 
 # WHAT TO REPORT (the substance for the sections above)
@@ -44,7 +46,7 @@ digestible — short bullets, bold headers, and bold figures — not a dense par
   recommended structure (a fresh 30-year term restarts the clock).
 
 ## Your savings
-- New payment **{new_payment}** vs your current **{current_payment}** → monthly savings **{monthly_savings}**;
+- New payment {new_payment} vs your current {current_payment} → monthly savings **{monthly_savings}**;
   break-even **{break_even} months** (on a {mortgage_balance} balance).
 - If these are null/0 (because the user's rate already beats the market), say they weren't calculated.
 

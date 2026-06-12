@@ -8,7 +8,6 @@ apply_theme()
 page_header(
     "The origin story",
     "Project Inspiration",
-    "Why RefiAI exists.",
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1]
