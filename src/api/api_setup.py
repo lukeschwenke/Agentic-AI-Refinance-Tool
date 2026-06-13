@@ -53,6 +53,7 @@ class RefiAdviceResponse(BaseModel):
     remaining_term_years: Optional[float] = None
     stay_horizon_years: Optional[float] = None
     closing_costs: Optional[float] = None
+    verifier_passed: Optional[bool] = None
 
 # ----- Helpers -----
 def extract_text(value) -> str:
@@ -140,6 +141,9 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
             "monthly_savings": None,
             "break_even": None,
             "recommendation": "",
+            "verifier_passed": True,
+            "verifier_feedback": "",
+            "verifier_attempts": 0,
         }
 
         result = graph_app.invoke(initial_state)
@@ -162,6 +166,7 @@ def return_advice_recommendation(payload: RefiAdviceRequest):
             remaining_term_years=result.get("remaining_term_years", None),
             stay_horizon_years=result.get("stay_horizon_years", None),
             closing_costs=result.get("closing_costs", None),
+            verifier_passed=result.get("verifier_passed", None),
             )
         
         print("POST Request Successful!")

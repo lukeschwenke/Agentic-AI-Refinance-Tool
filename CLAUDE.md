@@ -46,25 +46,31 @@ Request flow: **Streamlit UI** ([src/frontend/RefiAI_Main_Page.py](src/frontend/
 
 ### The LangGraph workflow ([src/core/workflow.py](src/core/workflow.py))
 
-A `StateGraph` over the `State` TypedDict ([src/core/define_state_and_llm.py](src/core/define_state_and_llm.py)) with six nodes and one **conditional short-circuit**:
+A `StateGraph` over the `State` TypedDict ([src/core/define_state_and_llm.py](src/core/define_state_and_llm.py)) with seven nodes, a **conditional short-circuit**, a **parallel fan-out**, and a **verifier loop**:
 
 ```
-market ──> condition ──> market_rate unavailable (<= 0) OR > interest_rate: finalizer (END)
-                         else: treasury_yield -> rate_outlook -> calculator -> strategy -> finalizer
+market ──> route ──> market_rate unavailable (<=0) OR > interest_rate: finalizer
+                     else: (treasury_yield ‖ rate_outlook) -> calculator -> strategy -> finalizer
+finalizer ──> verifier ──> pass: END  |  fail: finalizer (regenerate, MAX_VERIFIER_RETRIES=1)
 ```
 
-Two control-flow rules: (1) if the fetched market rate is *higher* than the user's current rate, refinancing makes no sense; (2) if **both** rate sources failed (`market_rate <= 0`), there is nothing valid to analyze. Either way the workflow jumps straight to `finalizer`, downstream state stays `None`/empty, and the finalizer's precomputed `decision_hint` makes it report honestly (DO_NOT_REFINANCE vs RATES_UNAVAILABLE).
+- **Short-circuit:** if the market rate is higher than the user's rate, or both rate sources failed (`market_rate <= 0`), there's nothing to analyze — jump to `finalizer`, whose precomputed `decision_hint` reports honestly (DO_NOT_REFINANCE vs RATES_UNAVAILABLE).
+- **Parallel:** `treasury_yield` and `rate_outlook` are independent, so `route_after_market` returns the list `["treasury_yield", "rate_outlook"]` to fan out; both edge into `calculator`, which waits for both (fan-in).
+- **Verifier loop:** `verifier_route` sends a failed draft back to `finalizer` once, else ends.
 
 ### Agents ([src/core/agents.py](src/core/agents.py))
 
-Each agent is a plain function `(State) -> State` that mutates and returns shared state. The design rule: **LLMs decide and explain; Python computes.** Every number comes from deterministic code in [tools.py](src/core/tools.py); LLM calls are single-shot and, where they return data, use `llm.with_structured_output(<Pydantic model>)` so values are guaranteed valid (see `RateOutlookRead`, `StrategyPick`). When extending an agent: append to `state["path"]`, and bump `state["num_tool_calls"]` **only for successful external data fetches** (it is a fetch counter, not a step counter).
+Each agent is `(State) -> dict` and **returns only its delta keys** (a partial update) — NOT the whole mutated state. This is required for the parallel branches: `path` and `num_tool_calls` carry `operator.add` reducers, so each node returns `{"path": ["its_name"], "num_tool_calls": <fetches>}` and the framework sums/concatenates. (Returning the full accumulated `path` would duplicate it through the reducer.) `num_tool_calls` counts **successful external fetches only**, not steps.
 
-- `market_expert_agent` — two deterministic sources: Tavily answer parsed by `parse_rate_from_text` (LLM extraction only as fallback) + the local credit union scrape; lower non-zero rate wins (`consolidate_rates`).
-- `treasury_yield_agent` — CNBC quote (yield + 52-wk hi/lo + prev close) → `classify_rate_timing` range/direction/spread labels. No LLM.
-- `rate_outlook_agent` — Tavily search of Fed/forecaster commentary → structured classification (falling/stable/rising, act/wait/neutral).
-- `calculator_agent` — builds the scenario set deterministically via `build_refinance_scenarios` (keep-payoff-date / 30-yr reset / 15-yr), resolving defaults (term solved from the payment, ~2% closing costs, 7-yr horizon). No LLM.
-- `strategy_agent` — one structured LLM call that picks a scenario (or "none") and explains; copies the pick's numbers into the primary state fields.
-- `finalizer_agent` — loads [src/prompts/finalizer_prompt.txt](src/prompts/finalizer_prompt.txt); **all values are pre-formatted in Python** (`_fmt_*` helpers) and the verdict branch is precomputed (`_decision_hint`) so the LLM only narrates — never recompute or reformat numbers in the prompt.
+Design rule: **LLMs decide and explain; Python computes.** Every number comes from deterministic code in [tools.py](src/core/tools.py); LLM calls are single-shot and, where they return data, use `llm.with_structured_output(<Pydantic model>)` so values are guaranteed valid (`RateOutlookRead`, `StrategyPick`, `VerifierVerdict`).
+
+- `market_expert_agent` — Tavily answer parsed by `parse_rate_from_text` (LLM fallback) + local credit union scrape; lower non-zero rate wins (`consolidate_rates`).
+- `treasury_yield_agent` — CNBC quote → `classify_rate_timing` labels. No LLM. (parallel)
+- `rate_outlook_agent` — Tavily Fed/forecaster search → structured classification. (parallel)
+- `calculator_agent` — `build_refinance_scenarios` (keep-payoff / 30-yr reset / 15-yr), resolving defaults (term solved from payment, ~2% closing costs, 7-yr horizon). No LLM.
+- `strategy_agent` — one structured call that picks a scenario (or "none") and copies its numbers into the primary fields.
+- `finalizer_agent` — loads [src/prompts/finalizer_prompt.txt](src/prompts/finalizer_prompt.txt); **all values are pre-formatted** (`_fmt_*`) and the verdict is precomputed (`_decision_hint`) — the LLM only narrates. On a verifier retry it appends the judge's complaint to the prompt.
+- `verifier_agent` — LLM-as-judge: fact-checks the finalizer draft against the computed values; on mismatch sets `verifier_feedback` and loops back. Fails **open** (passes on judge error) so it never blocks a user.
 
 ### Tools ([src/core/tools.py](src/core/tools.py))
 

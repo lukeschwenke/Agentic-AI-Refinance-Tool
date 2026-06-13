@@ -61,14 +61,17 @@ def market_expert_agent(state: State) -> dict:
     if market_rate > 0:
         print("===SUCCESSFULLY EXECUTED MARKET RESEARCH AGENT TOOL CALL===")
 
-    state["national_rate"] = national_rate
-    state["local_credit_union_rate"] = local_rate
-    state["market_rate"] = market_rate
-    state["market_rate_source"] = source
-    # Count successful external data fetches only.
-    state["num_tool_calls"] += int(national_rate > 0) + int(local_rate > 0)
-    state["path"].append("market_expert_agent")
-    return state
+    # Agents return only their delta keys (not the whole mutated state): required so the
+    # parallel branches downstream can merge cleanly via the State reducers.
+    return {
+        "national_rate": national_rate,
+        "local_credit_union_rate": local_rate,
+        "market_rate": market_rate,
+        "market_rate_source": source,
+        # Count successful external data fetches only.
+        "num_tool_calls": int(national_rate > 0) + int(local_rate > 0),
+        "path": ["market_expert_agent"],
+    }
 
 # Agent #2
 def treasury_yield_agent(state: State) -> dict:
@@ -96,17 +99,18 @@ def treasury_yield_agent(state: State) -> dict:
         mortgage_rate=mortgage_rate,
     )
 
-    state["treasury_yield"] = quote["last"]
-    state["treasury_yr_low"] = quote["yr_low"]
-    state["treasury_yr_high"] = quote["yr_high"]
-    state["treasury_range_position"] = timing["range_position"]
-    state["treasury_timing_label"] = timing["range_label"]
-    state["treasury_direction"] = timing["direction"]
-    state["mortgage_treasury_spread"] = timing["spread"]
-    state["spread_label"] = timing["spread_label"]
-    state["num_tool_calls"] = state.get("num_tool_calls", 0) + int(fetched)
-    state["path"].append("treasury_yield_agent")
-    return state
+    return {
+        "treasury_yield": quote["last"],
+        "treasury_yr_low": quote["yr_low"],
+        "treasury_yr_high": quote["yr_high"],
+        "treasury_range_position": timing["range_position"],
+        "treasury_timing_label": timing["range_label"],
+        "treasury_direction": timing["direction"],
+        "mortgage_treasury_spread": timing["spread"],
+        "spread_label": timing["spread_label"],
+        "num_tool_calls": int(fetched),
+        "path": ["treasury_yield_agent"],
+    }
 
 class RateOutlookRead(BaseModel):
     """Structured classification of the rate-outlook search answer."""
@@ -129,11 +133,12 @@ def rate_outlook_agent(state: State) -> dict:
         outlook_text = ""
 
     if not outlook_text:
-        state["rate_outlook_label"] = "unavailable"
-        state["rate_outlook_summary"] = ""
-        state["rate_outlook_action"] = "neutral"
-        state["path"].append("rate_outlook_agent")
-        return state
+        return {
+            "rate_outlook_label": "unavailable",
+            "rate_outlook_summary": "",
+            "rate_outlook_action": "neutral",
+            "path": ["rate_outlook_agent"],
+        }
 
     prompt = f"""Classify the near-term outlook for US 30-year fixed mortgage rates from the
 market commentary below.
@@ -154,12 +159,13 @@ Commentary:
     except Exception:
         pass
 
-    state["rate_outlook_label"] = label
-    state["rate_outlook_summary"] = summary
-    state["rate_outlook_action"] = action
-    state["num_tool_calls"] = state.get("num_tool_calls", 0) + 1
-    state["path"].append("rate_outlook_agent")
-    return state
+    return {
+        "rate_outlook_label": label,
+        "rate_outlook_summary": summary,
+        "rate_outlook_action": action,
+        "num_tool_calls": 1,
+        "path": ["rate_outlook_agent"],
+    }
 
 # Agent #3
 def calculator_agent(state: State) -> dict:
@@ -178,29 +184,30 @@ def calculator_agent(state: State) -> dict:
         remaining_term = estimate_remaining_term_years(balance, current_payment, state["interest_rate"])
     if not remaining_term or remaining_term <= 0:
         remaining_term = 30.0
-    state["remaining_term_years"] = round(remaining_term, 1)
 
     horizon = state.get("stay_horizon_years") or DEFAULT_STAY_HORIZON_YEARS
-    state["stay_horizon_years"] = horizon
     closing_costs = resolve_closing_costs(state.get("closing_costs"), balance)
-    state["closing_costs"] = round(closing_costs, 2)
-
     scenarios = build_refinance_scenarios(balance, current_payment, market_rate,
                                           remaining_term, closing_costs, horizon)
-    state["scenarios"] = scenarios
 
+    out = {
+        "remaining_term_years": round(remaining_term, 1),
+        "stay_horizon_years": horizon,
+        "closing_costs": round(closing_costs, 2),
+        "scenarios": scenarios,
+        "path": ["calculator_agent"],
+    }
     if scenarios:
         primary = scenarios[0]
-        state["new_payment"] = primary["new_payment"]
-        state["monthly_savings"] = primary["monthly_savings"]
-        state["break_even"] = primary["break_even"]
-        state["lifetime_interest_delta"] = primary["lifetime_interest_delta"]
-        state["breaks_even_within_horizon"] = primary["breaks_even_within_horizon"]
-        state["recommended_scenario_label"] = primary["label"]
+        out["new_payment"] = primary["new_payment"]
+        out["monthly_savings"] = primary["monthly_savings"]
+        out["break_even"] = primary["break_even"]
+        out["lifetime_interest_delta"] = primary["lifetime_interest_delta"]
+        out["breaks_even_within_horizon"] = primary["breaks_even_within_horizon"]
+        out["recommended_scenario_label"] = primary["label"]
 
     print("===SUCCESSFULLY EXECUTED CALCULATOR AGENT (scenarios built)===")
-    state["path"].append("calculator_agent")
-    return state
+    return out
 
 class StrategyPick(BaseModel):
     """Structured strategy decision over the precomputed scenarios."""
@@ -216,8 +223,7 @@ def strategy_agent(state: State) -> dict:
     this agent only selects and explains. One LLM call; falls back to the first scenario."""
     scenarios = state.get("scenarios") or []
     if not scenarios:
-        state["path"].append("strategy_agent")
-        return state
+        return {"path": ["strategy_agent"]}
 
     horizon = state.get("stay_horizon_years") or DEFAULT_STAY_HORIZON_YEARS
     labels = [s["label"] for s in scenarios]
@@ -256,20 +262,19 @@ recommended_label must be exactly one of {labels}, or "none"."""
     except Exception:
         pass
 
+    out = {"strategy_rationale": rationale, "path": ["strategy_agent"]}
     if chosen is None:
         # No structure is worth doing: keep the calculator's honest seeded numbers for
         # the metric cards, but tell the finalizer nothing was viable.
-        state["recommended_scenario_label"] = "none"
+        out["recommended_scenario_label"] = "none"
     else:
-        state["recommended_scenario_label"] = chosen["label"]
-        state["new_payment"] = chosen["new_payment"]
-        state["monthly_savings"] = chosen["monthly_savings"]
-        state["break_even"] = chosen["break_even"]
-        state["lifetime_interest_delta"] = chosen["lifetime_interest_delta"]
-        state["breaks_even_within_horizon"] = chosen["breaks_even_within_horizon"]
-    state["strategy_rationale"] = rationale
-    state["path"].append("strategy_agent")
-    return state
+        out["recommended_scenario_label"] = chosen["label"]
+        out["new_payment"] = chosen["new_payment"]
+        out["monthly_savings"] = chosen["monthly_savings"]
+        out["break_even"] = chosen["break_even"]
+        out["lifetime_interest_delta"] = chosen["lifetime_interest_delta"]
+        out["breaks_even_within_horizon"] = chosen["breaks_even_within_horizon"]
+    return out
 
 # ---- Finalizer input formatting: Python formats, the LLM only narrates ----
 
@@ -390,7 +395,97 @@ def finalizer_agent(state: State) -> dict:
         rate_outlook_action=state.get('rate_outlook_action') or "neutral",
     )
 
+    # On a verifier-triggered regeneration, append the judge's complaint so the
+    # rewrite fixes it. Appended after .format() to avoid a mandatory template var.
+    feedback = state.get("verifier_feedback")
+    if feedback:
+        final_prompt += (
+            "\n\n# CORRECTION REQUIRED\nA previous draft of this recommendation had this "
+            f"problem: {feedback}\nProduce a corrected version that fixes it while still "
+            "following every rule above."
+        )
+
     response = llm_finalizer.invoke(final_prompt)
-    state["recommendation"] = response
-    state["path"].append("finalizer_agent")
-    return state
+    return {"recommendation": response, "path": ["finalizer_agent"]}
+
+
+# At most one regeneration: generation is already heavily constrained, so the judge is
+# a safety net, not a workhorse. Bounds latency and prevents an infinite loop.
+MAX_VERIFIER_RETRIES = 1
+
+
+class VerifierVerdict(BaseModel):
+    """LLM-as-judge result for the finalizer's draft."""
+    passed: bool = Field(description="True if the recommendation is consistent with the facts.")
+    problem: str = Field(default="", description="If not passed, ONE sentence naming the single most important inconsistency.")
+
+
+def _verifier_facts(state: State) -> str:
+    """Compact ground-truth block the judge checks the draft against."""
+    return "\n".join([
+        f"- Decision: {_decision_hint(state['interest_rate'], state['market_rate'])}",
+        f"- Current rate: {_fmt_pct(state['interest_rate'])}",
+        f"- Market rate used: {_fmt_pct(state['market_rate'] if state['market_rate'] else None)} ({state['market_rate_source'] or 'unavailable'})",
+        f"- National rate: {_fmt_pct(state['national_rate'] if state['national_rate'] else None)}",
+        f"- Recommended structure: {state.get('recommended_scenario_label') or 'n/a'}",
+        f"- New payment: {_fmt_money(state['new_payment'])}",
+        f"- Monthly savings: {_fmt_money(state['monthly_savings'])}",
+        f"- Break-even: {_fmt_months(state['break_even'])}",
+        f"- Lifetime interest change: {_fmt_signed_money(state.get('lifetime_interest_delta'))}",
+        f"- Breaks even within horizon: {_fmt_flag(state.get('breaks_even_within_horizon'))}",
+        f"- Rate outlook: {state.get('rate_outlook_label') or 'unavailable'}",
+    ])
+
+
+# Agent #5
+def verifier_agent(state: State) -> dict:
+    """LLM-as-judge over the finalizer's draft (evaluator-optimizer pattern). The finalizer
+    is the only node that emits free-form text containing numbers and a verdict, so this is
+    the one place a mistake can be introduced; everything upstream is deterministic. Checks
+    the draft against the ground-truth facts and, on failure, sends it back to the finalizer
+    once with the complaint. Fails OPEN (passes) if the judge itself errors — never block a
+    user over a checker failure."""
+    rec = state.get("recommendation")
+    text = getattr(rec, "content", None) or (rec if isinstance(rec, str) else "")
+    if not text.strip():
+        return {"verifier_passed": True, "path": ["verifier_agent"]}
+
+    prompt = f"""You are a meticulous fact-checker for a mortgage refinance recommendation.
+Below are the GROUND-TRUTH facts (already computed and correct) and the DRAFT shown to the user.
+
+GROUND-TRUTH FACTS:
+{_verifier_facts(state)}
+
+DRAFT:
+{text}
+
+Check ONLY for factual inconsistencies:
+1. The draft's verdict must match the Decision (e.g. if Decision is DO_NOT_REFINANCE, the draft must not urge refinancing; if RATES_UNAVAILABLE, it must say rates couldn't be retrieved and give no verdict).
+2. Every dollar amount and percentage the draft states must match a fact above (rounding is fine).
+3. The draft must not present a value as a real number when the fact is "n/a"/"unavailable" (e.g. no "0%").
+Ignore wording, tone, and formatting. Pass unless there is a real factual contradiction."""
+
+    passed, problem = True, ""
+    try:
+        verdict = llm.with_structured_output(VerifierVerdict).invoke(prompt)
+        passed, problem = verdict.passed, (verdict.problem or "")
+        print(f"===VERIFIER: {'PASS' if passed else 'FAIL — ' + problem}===")
+    except Exception:
+        passed, problem = True, ""   # fail open
+
+    attempts = state.get("verifier_attempts", 0) + (0 if passed else 1)
+    return {
+        "verifier_passed": passed,
+        "verifier_feedback": "" if passed else problem,
+        "verifier_attempts": attempts,
+        "path": ["verifier_agent"],
+    }
+
+
+def verifier_route(state: State) -> str:
+    """Pass, or out of retries -> finish. Otherwise regenerate the finalizer once."""
+    if state.get("verifier_passed", True):
+        return "END"
+    if state.get("verifier_attempts", 0) > MAX_VERIFIER_RETRIES:
+        return "END"
+    return "finalizer"

@@ -239,12 +239,17 @@ if resp:
                 "calculator_agent": "Scenario math",
                 "strategy_agent": "Strategy",
                 "finalizer_agent": "Final write-up",
+                "verifier_agent": "Self-check",
             }
             path = resp.get("path", [])
-            steps = [FRIENDLY_STEPS.get(p, p) for p in path] if isinstance(path, list) else [str(path)]
+            labels = [FRIENDLY_STEPS.get(p, p) for p in path] if isinstance(path, list) else [str(path)]
+            # Collapse consecutive repeats (a verifier retry re-runs write-up + self-check).
+            steps = [lbl for i, lbl in enumerate(labels) if i == 0 or lbl != labels[i - 1]]
             st.caption("The steps the agents took:")
             st.code(" → ".join(steps))
-            st.caption(f"Live data fetches: {resp.get('num_tool_calls', '-')}")
+            passed = resp.get("verifier_passed")
+            check = "passed" if passed else "flagged" if passed is False else "—"
+            st.caption(f"Live data fetches: {resp.get('num_tool_calls', '-')}  ·  Self-check: {check}")
 
 footer()
 

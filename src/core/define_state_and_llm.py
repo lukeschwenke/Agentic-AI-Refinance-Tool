@@ -1,4 +1,5 @@
-from typing import TypedDict, List
+from typing import TypedDict, List, Annotated
+import operator
 from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
@@ -19,8 +20,10 @@ class State(TypedDict):
     national_rate: float
     local_credit_union_rate: float
     market_rate_source: str
-    num_tool_calls: int
-    path: List[str]
+    # Accumulators use operator.add reducers so the parallel treasury/rate-outlook
+    # branches can both append without a "can receive only one value" conflict.
+    num_tool_calls: Annotated[int, operator.add]
+    path: Annotated[List[str], operator.add]
     current_payment: float
     mortgage_balance: float
     # Optional user-provided "advanced details" (None -> derived/defaulted downstream)
@@ -42,6 +45,10 @@ class State(TypedDict):
     monthly_savings: float | None
     break_even: float | None
     recommendation: str
+    # Verifier (LLM-as-judge) loop over the finalizer's draft
+    verifier_passed: bool
+    verifier_feedback: str
+    verifier_attempts: int
 
 llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL_NAME", "gpt-5.4-mini"),
                  api_key=os.getenv("OPENAI_API_KEY"),

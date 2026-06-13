@@ -85,12 +85,15 @@ Counters are stored under keys like `ratelimit#<ip>#<date>` and `ratelimit#globa
 
 Agent implementations live in `src/core/agents.py`. The guiding principle: **LLMs decide and explain; Python computes** — every number comes from deterministic code, and the LLM calls use structured outputs so their answers are guaranteed valid.
 
-The workflow is a LangGraph `StateGraph` with a **conditional short-circuit**: if the fetched market rate is *higher* than the user's current rate (or live rates couldn't be retrieved at all), there is nothing worth analyzing, so the workflow jumps straight to the finalizer.
+The workflow is a LangGraph `StateGraph`. It **short-circuits** when there's nothing to analyze (the market rate is higher than the user's rate, or live rates couldn't be retrieved), runs the two independent context fetches **in parallel**, and **self-checks** the final draft:
 
 ```
-market ──> condition ──> market rate unavailable OR > interest rate: finalizer (END)
-                         else: treasury_yield -> rate_outlook -> calculator -> strategy -> finalizer
+market ──> condition ──> unavailable OR rate already beats market: finalizer
+                         else: (treasury_yield ‖ rate_outlook) -> calculator -> strategy -> finalizer
+finalizer ──> verifier ──> pass: END   |   fail: finalizer (regenerate, max 1 retry)
 ```
+
+`treasury_yield` and `rate_outlook` are independent, so they run as parallel branches (state merges via `operator.add` reducers on the `path`/`num_tool_calls` accumulators) and fan back in at the calculator.
 
 ### 1. Market Rate Agent
 - Gathers both a **national average** rate (Tavily search, parsed deterministically) and a **DC-area local credit union** rate (scraped from its published rates).
@@ -99,6 +102,7 @@ market ──> condition ──> market rate unavailable OR > interest rate: fin
 ### 2. Treasury / Timing Agent
 - Fetches the U.S. **10-year Treasury yield** plus its 52-week high/low and prior close.
 - Derives relative timing signals: position within the 52-week range, day-over-day direction, and the mortgage-to-Treasury spread vs. the ~1.75% long-run norm. Framed as context, not a gate.
+- Runs **in parallel** with the Rate Outlook agent.
 
 ### 3. Rate Outlook Agent
 - Searches recent Fed/forecaster commentary and classifies the near-term direction of 30-year rates (**falling / stable / rising**) with a suggested posture (**act / wait / neutral**).
@@ -111,6 +115,9 @@ market ──> condition ──> market rate unavailable OR > interest rate: fin
 
 ### 6. Finalizer Agent
 - Loads its prompt from `src/prompts/finalizer_prompt.txt` and synthesizes the final, user-facing recommendation. All numbers and the verdict branch are precomputed and pre-formatted in Python — the LLM only narrates.
+
+### 7. Verifier Agent (LLM-as-judge)
+- The finalizer is the only node that emits free-form text with numbers, so a second (cheaper) model fact-checks its draft against the computed values and the precomputed verdict. On a mismatch it sends the draft back to the finalizer **once** with the specific complaint (an evaluator-optimizer loop, bounded to one retry); it fails *open* so a checker error never blocks the user.
 
 External fetches (CNBC, the credit union page, Tavily) are retried with backoff and cached for ~15 minutes, and a request that finds no usable market rate degrades to an honest "couldn't retrieve live rates" response instead of a fabricated analysis.
 
@@ -150,7 +157,8 @@ Example response (abridged):
   "treasury_yield": 4.21,
   "num_tool_calls": 4,
   "path": ["market_expert_agent", "treasury_yield_agent", "rate_outlook_agent",
-           "calculator_agent", "strategy_agent", "finalizer_agent"],
+           "calculator_agent", "strategy_agent", "finalizer_agent", "verifier_agent"],
+  "verifier_passed": true,
   "new_payment": 4892.10,
   "monthly_savings": 351.16,
   "break_even": 14.2,

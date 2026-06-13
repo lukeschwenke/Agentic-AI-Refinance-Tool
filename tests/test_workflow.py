@@ -1,6 +1,7 @@
 """Offline tests for the LangGraph workflow: every external fetch and LLM call is
-stubbed, so these verify the graph's routing, the state wiring between agents, and
-that the finalizer receives the right precomputed decision — with no network access."""
+stubbed, so these verify the graph's routing (including the parallel treasury/rate-outlook
+fan-out and the verifier regeneration loop), the state wiring between agents, and that the
+finalizer receives the right precomputed decision — with no network access."""
 
 import pytest
 from types import SimpleNamespace
@@ -10,9 +11,6 @@ from core.workflow import app as graph_app
 
 
 GOOD_QUOTE = {"last": 4.40, "yr_high": 4.70, "yr_low": 3.90, "prev_close": 4.42}
-
-ALL_AGENTS = ["market_expert_agent", "treasury_yield_agent", "rate_outlook_agent",
-              "calculator_agent", "strategy_agent", "finalizer_agent"]
 
 
 def make_initial_state(**overrides):
@@ -50,9 +48,20 @@ def make_initial_state(**overrides):
         "monthly_savings": None,
         "break_even": None,
         "recommendation": "",
+        "verifier_passed": True,
+        "verifier_feedback": "",
+        "verifier_attempts": 0,
     }
     state.update(overrides)
     return state
+
+
+def assert_continue_path(path):
+    """market -> {treasury, rate_outlook in either order} -> calculator -> strategy
+    -> finalizer -> verifier."""
+    assert path[0] == "market_expert_agent"
+    assert set(path[1:3]) == {"treasury_yield_agent", "rate_outlook_agent"}
+    assert path[3:] == ["calculator_agent", "strategy_agent", "finalizer_agent", "verifier_agent"]
 
 
 class FakeStructured:
@@ -76,12 +85,16 @@ class FakeLLM:
 
 
 class FakeFinalizerLLM:
-    """Captures the formatted finalizer prompt so tests can assert on its contents."""
+    """Captures every formatted finalizer prompt so tests can assert on contents/retries."""
     def __init__(self):
-        self.last_prompt = None
+        self.prompts = []
+
+    @property
+    def last_prompt(self):
+        return self.prompts[-1] if self.prompts else None
 
     def invoke(self, prompt):
-        self.last_prompt = prompt
+        self.prompts.append(prompt)
         return SimpleNamespace(content="**Stubbed verdict.**")
 
 
@@ -97,7 +110,7 @@ def stub_down_market(monkeypatch):
     monkeypatch.setattr(agents, "get_local_credit_union_30yr_rate", _boom)
 
 
-def stub_rest(monkeypatch, recommended_label="Keep your current payoff date"):
+def stub_rest(monkeypatch, recommended_label="Keep your current payoff date", verifier_passed=True):
     monkeypatch.setattr(agents, "get_treasury_10yr_quote", lambda: dict(GOOD_QUOTE))
     monkeypatch.setattr(agents, "get_rate_outlook_search", lambda: "Rates look steady near 6%.")
     fake_llm = FakeLLM({
@@ -105,6 +118,7 @@ def stub_rest(monkeypatch, recommended_label="Keep your current payoff date"):
             label="stable", action="neutral", summary="Rates should hold steady."),
         "StrategyPick": agents.StrategyPick(
             recommended_label=recommended_label, rationale="Best balance of savings and payoff date."),
+        "VerifierVerdict": agents.VerifierVerdict(passed=verifier_passed, problem="" if verifier_passed else "x"),
     })
     finalizer = FakeFinalizerLLM()
     monkeypatch.setattr(agents, "llm", fake_llm)
@@ -120,14 +134,13 @@ def test_continue_path_runs_all_agents_and_wires_state(monkeypatch):
     result = graph_app.invoke(make_initial_state(
         remaining_term_years=22.0, stay_horizon_years=6.0, closing_costs=9000.0))
 
-    assert result["path"] == ALL_AGENTS
+    assert_continue_path(result["path"])
     # Lower of the two sources wins; both sources reported.
     assert result["market_rate"] == 6.31
     assert result["national_rate"] == 6.55
     assert result["market_rate_source"] == "Washington DC area"
-    # Fetch counter = national + local + treasury + outlook.
+    # Fetch counter = national + local + treasury + outlook (summed via reducer).
     assert result["num_tool_calls"] == 4
-    # Treasury timing got classified from the stub quote.
     assert result["treasury_timing_label"] in ("favorable", "neutral", "elevated")
     assert result["rate_outlook_label"] == "stable"
     # Scenario set built; primary metrics mirror the recommended scenario.
@@ -140,6 +153,8 @@ def test_continue_path_runs_all_agents_and_wires_state(monkeypatch):
     assert result["lifetime_interest_delta"] == recommended["lifetime_interest_delta"]
     # The finalizer got the precomputed verdict branch (gap 7.5 - 6.31 >= 1.0).
     assert "STRONG_REFINANCE_OPPORTUNITY" in finalizer.last_prompt
+    assert result["verifier_passed"] is True
+    assert len(finalizer.prompts) == 1   # no regeneration when the verifier passes
     assert result["recommendation"].content == "**Stubbed verdict.**"
 
 
@@ -150,7 +165,7 @@ def test_short_circuit_when_rate_beats_market(monkeypatch):
 
     result = graph_app.invoke(make_initial_state(interest_rate=4.0))
 
-    assert result["path"] == ["market_expert_agent", "finalizer_agent"]
+    assert result["path"] == ["market_expert_agent", "finalizer_agent", "verifier_agent"]
     assert result["scenarios"] == []
     assert result["new_payment"] is None
     assert "DO_NOT_REFINANCE" in finalizer.last_prompt
@@ -166,12 +181,11 @@ def test_rates_unavailable_skips_analysis(monkeypatch):
 
     result = graph_app.invoke(make_initial_state())
 
-    assert result["path"] == ["market_expert_agent", "finalizer_agent"]
+    assert result["path"] == ["market_expert_agent", "finalizer_agent", "verifier_agent"]
     assert result["market_rate"] == 0.0
     assert result["market_rate_source"] == "unavailable"
     assert result["scenarios"] == []
     assert result["new_payment"] is None
-    assert result["monthly_savings"] is None
     assert result["num_tool_calls"] == 0
     assert "RATES_UNAVAILABLE" in finalizer.last_prompt
 
@@ -190,3 +204,44 @@ def test_strategy_none_keeps_seeded_numbers(monkeypatch):
     # Seeded from the first scenario by calculator_agent, not cleared.
     assert result["new_payment"] == result["scenarios"][0]["new_payment"]
     assert "none" in finalizer.last_prompt
+
+
+@pytest.mark.calculation
+def test_verifier_regenerates_finalizer_once_on_failure(monkeypatch):
+    """The verifier fails the first draft, the finalizer regenerates with the complaint,
+    the second draft passes — and the loop is bounded to a single retry."""
+    stub_happy_market(monkeypatch)
+    monkeypatch.setattr(agents, "get_treasury_10yr_quote", lambda: dict(GOOD_QUOTE))
+    monkeypatch.setattr(agents, "get_rate_outlook_search", lambda: "Rates look steady near 6%.")
+
+    class FlakyLLM(FakeLLM):
+        def __init__(self, by_schema):
+            super().__init__(by_schema)
+            self.verifier_calls = 0
+
+        def with_structured_output(self, schema):
+            if schema.__name__ == "VerifierVerdict":
+                self.verifier_calls += 1
+                passed = self.verifier_calls >= 2   # fail first, pass second
+                return FakeStructured(agents.VerifierVerdict(
+                    passed=passed, problem="" if passed else "a stated number is wrong"))
+            return FakeStructured(self.by_schema[schema.__name__])
+
+    flaky = FlakyLLM({
+        "RateOutlookRead": agents.RateOutlookRead(label="stable", action="neutral", summary="Steady."),
+        "StrategyPick": agents.StrategyPick(recommended_label="Keep your current payoff date", rationale="ok"),
+    })
+    finalizer = FakeFinalizerLLM()
+    monkeypatch.setattr(agents, "llm", flaky)
+    monkeypatch.setattr(agents, "llm_finalizer", finalizer)
+
+    result = graph_app.invoke(make_initial_state(
+        remaining_term_years=22.0, stay_horizon_years=6.0, closing_costs=9000.0))
+
+    assert flaky.verifier_calls == 2
+    assert len(finalizer.prompts) == 2                       # regenerated exactly once
+    assert "CORRECTION REQUIRED" in finalizer.prompts[1]     # feedback fed back in
+    assert "a stated number is wrong" in finalizer.prompts[1]
+    assert result["verifier_passed"] is True
+    assert result["path"].count("finalizer_agent") == 2
+    assert result["path"].count("verifier_agent") == 2

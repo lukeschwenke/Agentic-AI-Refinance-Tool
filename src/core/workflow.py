@@ -3,16 +3,14 @@ from langgraph.graph import StateGraph, END
 from core.agents import *
 
 
-def condition(state: State) -> str:
+def route_after_market(state: State):
     market_rate = state["market_rate"] or 0.0
-    # Both rate sources failed: there is nothing valid to analyze, so skip straight
-    # to the finalizer (which reports that live rates couldn't be retrieved) instead
-    # of letting the calculator build scenarios against a 0% market rate.
-    if market_rate <= 0:
-        return "END"
-    if market_rate > state["interest_rate"]:
-        return "END"
-    return "CONTINUE"
+    # Nothing valid to analyze (both rate sources failed, or the user's rate already
+    # beats the market) -> skip straight to the finalizer rather than computing against
+    # a useless market rate. Otherwise fan OUT to the two independent context fetches.
+    if market_rate <= 0 or market_rate > state["interest_rate"]:
+        return "finalizer"
+    return ["treasury_yield", "rate_outlook"]
 
 workflow = StateGraph(State)
 workflow.add_node("market", market_expert_agent)
@@ -21,16 +19,20 @@ workflow.add_node("rate_outlook", rate_outlook_agent)
 workflow.add_node("calculator", calculator_agent)
 workflow.add_node("strategy", strategy_agent)
 workflow.add_node("finalizer", finalizer_agent)
+workflow.add_node("verifier", verifier_agent)
 
 workflow.set_entry_point("market")
-workflow.add_conditional_edges("market", condition, {"CONTINUE": "treasury_yield",
-                                                     "END": "finalizer"})
-# CONTINUE path: deterministic Treasury signal -> forward-looking outlook -> scenario
-# math -> strategy pick -> finalizer.
-workflow.add_edge("treasury_yield", "rate_outlook")
+# treasury_yield and rate_outlook are independent, so they run in PARALLEL and fan back
+# in at the calculator (which waits for both).
+workflow.add_conditional_edges("market", route_after_market,
+                               ["treasury_yield", "rate_outlook", "finalizer"])
+workflow.add_edge("treasury_yield", "calculator")
 workflow.add_edge("rate_outlook", "calculator")
 workflow.add_edge("calculator", "strategy")
 workflow.add_edge("strategy", "finalizer")
-workflow.add_edge("finalizer", END)
+# Every finalizer draft is checked by the verifier (LLM-as-judge), which either ends the
+# run or sends it back to the finalizer once with feedback.
+workflow.add_edge("finalizer", "verifier")
+workflow.add_conditional_edges("verifier", verifier_route, {"finalizer": "finalizer", "END": END})
 
 app = workflow.compile()
