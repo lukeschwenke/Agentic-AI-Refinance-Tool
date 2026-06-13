@@ -1,4 +1,5 @@
-# Agentic Refinance Tool
+# RefiAI
+## Agentic Mortgage Refinance Tool
 ### Author: Luke Schwenke
 
 A multi-agent Python application that helps users evaluate whether refinancing a mortgage is financially beneficial. The system combines a FastAPI backend with a Streamlit UI and orchestrates multiple agents with LangGraph to retrieve live market context, calculate refinance break-even, and generate a natural-language recommendation. The LLM is OpenAI (model selected via the `OPENAI_MODEL_NAME` env var, e.g. *GPT-5* — not hardcoded).
