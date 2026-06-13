@@ -300,8 +300,9 @@ def footer():
     st.markdown(
         """
         <div class="refi-footer">
-          <strong>Disclaimer:</strong> RefiAI is a personal demo project for educational purposes.
-          It does not provide financial, legal, or tax advice, and nothing on this site is a loan
+          <strong>Disclaimer:</strong> RefiAI is a personal project meant to inform on market
+          conditions around refinancing. It does not provide financial, legal, or tax advice, and
+          nothing on this site is a loan
           offer, quote, or commitment to lend. Rates and calculations may be inaccurate or delayed —
           consult a licensed professional before making financial decisions.
           &copy; 2026 Luke Schwenke.

@@ -37,18 +37,23 @@ def clean_strings(text: str) -> str:
 
 
 def colorize_verdict(md: str) -> str:
-    """Tint the opening verdict line and the 'Bottom line:' in the theme's primary
-    (emerald) color using Streamlit's :primary[...] markdown directive."""
+    """Tint the opening verdict line and the 'Bottom line:' in the same teal as the
+    section eyebrows (--refi-accent2), so the recommendation matches the 'Your
+    recommendation' / 'Loan structures compared' headers. We wrap in a styled span
+    (not the :primary[...] directive, which uses the slightly different theme primary
+    color) — the surrounding st.markdown renders with unsafe_allow_html=True."""
+    def _tint(s: str) -> str:
+        return f'<span style="color:var(--refi-accent2)">{s}</span>'
     lines = md.split("\n")
     for i, line in enumerate(lines):
         s = line.strip()
         if s:
-            lines[i] = f":primary[{s}]"
+            lines[i] = _tint(s)
             break
     for i, line in enumerate(lines):
         s = line.strip()
         if s.startswith("**Bottom line") or s.startswith("Bottom line"):
-            lines[i] = f":primary[{s}]"
+            lines[i] = _tint(s)
     return "\n".join(lines)
 
 
@@ -180,10 +185,11 @@ if resp:
 
         st.write("")
         # Render the LLM's Markdown (bold/bullets/headers). Escape $ so Streamlit doesn't
-        # treat dollar amounts as LaTeX math. st.markdown sanitizes raw HTML by default.
+        # treat dollar amounts as LaTeX math. HTML is enabled so colorize_verdict's tint
+        # spans render; the content is our own pre-formatted finalizer output.
         recommendation = colorize_verdict(resp.get("recommendation", "-").replace("$", "\\$"))
         with st.container(border=True):
-            st.markdown(recommendation)
+            st.markdown(recommendation, unsafe_allow_html=True)
 
         if st.session_state.pop("scroll_to_results", False):
             # components.html runs in an iframe, so reach the parent document to
