@@ -41,6 +41,10 @@ packages = [
 [tool.pytest.ini_options]
 # (optional) so tests can also import without installing
 pythonpath = ["src"]
+testpaths = ["tests"]   # scripts/test_api_server.py is an interactive script, not a test
+# finalizer_eval tests hit the live LLM (cost + variance), so they're opt-in:
+# run them explicitly with `pytest -m finalizer_eval`.
+addopts = "-m 'not finalizer_eval'"
 markers = [
     "integration: tests that hit live endpoints",
     "local_cu: live test for the local credit union rate fetch",
@@ -48,6 +52,7 @@ markers = [
     "interest_rate: live test for the Tavily average interest rate",
     "rate_outlook: live test for the Tavily mortgage-rate outlook search",
     "calculation: offline unit/calculation tests",
+    "finalizer_eval: live-LLM evals of the finalizer prompt (opt-in)",
 ]
 [dependency-groups]
 dev = [
