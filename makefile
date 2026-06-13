@@ -22,7 +22,7 @@ PROXY_CONTAINER = agentic_refi_proxy
 # Route53 record pointing at this EC2. Caddy obtains/renews the free
 # Let's Encrypt certificate for it automatically — ports 80 and 443
 # must be open in the instance's security group.
-DOMAIN = refi-agentic-ai.lukeschwenke.com
+DOMAIN = refi-ai.lukeschwenke.com
 
 build:
 	docker buildx build \

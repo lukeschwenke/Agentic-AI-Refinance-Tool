@@ -3,9 +3,9 @@
 
 A multi-agent Python application that helps users evaluate whether refinancing a mortgage is financially beneficial. The system combines a FastAPI backend with a Streamlit UI and orchestrates multiple agents with LangGraph to retrieve live market context, calculate refinance break-even, and generate a natural-language recommendation. The LLM is OpenAI (model selected via the `OPENAI_MODEL_NAME` env var, e.g. *GPT-5* — not hardcoded).
 
-**Try it out!:** https://refi-agentic-ai.lukeschwenke.com/
+**Try it out!:** https://refi-ai.lukeschwenke.com/
 
-**API Docs (Swagger):** http://refi-agentic-ai.lukeschwenke.com:8000/docs
+**API Docs (Swagger):** http://refi-ai.lukeschwenke.com:8000/docs
 
 ---
 
