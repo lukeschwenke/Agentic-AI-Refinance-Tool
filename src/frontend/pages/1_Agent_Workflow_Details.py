@@ -76,8 +76,8 @@ with col2:
 st.write("")
 st.caption("Source")
 st.markdown(
-    "[Agent code](https://github.com/lukeschwenke/Agentic-AI/blob/main/src/core/agents.py)  ·  "
-    "[Tools code](https://github.com/lukeschwenke/Agentic-AI/blob/main/src/core/tools.py)"
+    "[Agent code](https://github.com/lukeschwenke/Agentic-AI-Refinance-Tool/blob/main/src/core/agents.py)  ·  "
+    "[Tools code](https://github.com/lukeschwenke/Agentic-AI-Refinance-Tool/blob/main/src/core/tools.py)"
 )
 
 footer()
