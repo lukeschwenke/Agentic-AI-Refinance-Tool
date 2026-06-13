@@ -1,6 +1,8 @@
 import os
 import boto3
 from decimal import Decimal
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 dynamodb = boto3.resource(
     "dynamodb",
@@ -9,19 +11,51 @@ dynamodb = boto3.resource(
 
 table = dynamodb.Table(os.environ["LOG_TABLE"])
 
+# Demo limits enforced by the API, per day (Eastern): per visitor IP, and a
+# global ceiling across all visitors that bounds worst-case OpenAI/Tavily spend.
+DAILY_IP_LIMIT = 5
+DAILY_GLOBAL_LIMIT = 25
+
 
 def _d(x):
     return Decimal(str(x)) if x is not None else None
 
-def log_event(interest_rate, current_payment, mortgage_balance, timestamp, primary_key):
-   
+def log_event(interest_rate, current_payment, mortgage_balance, timestamp, primary_key, ip=None):
+
     item = {
         "interest_rate": _d(interest_rate),
         "current_payment": _d(current_payment),
         "mortgage_balance": _d(mortgage_balance),
         "timestamp": timestamp,
-        "primary_key": primary_key
+        "primary_key": primary_key,
+        "ip": ip,
     }
 
     table.put_item(Item=item)
     print("Successfully logged to DB!")
+
+
+def _increment_daily_counter(scope: str) -> int:
+    """Atomically bump today's counter for `scope` and return the new count.
+
+    Counters live in the same log table under primary_key "ratelimit#<scope>#<date>",
+    so limits reset at midnight Eastern and no extra table is needed.
+    """
+    today = datetime.now(ZoneInfo("US/Eastern")).date().isoformat()
+    resp = table.update_item(
+        Key={"primary_key": f"ratelimit#{scope}#{today}"},
+        # "count" is a DynamoDB reserved word, hence the name placeholder
+        UpdateExpression="ADD #c :one",
+        ExpressionAttributeNames={"#c": "count"},
+        ExpressionAttributeValues={":one": Decimal(1)},
+        ReturnValues="UPDATED_NEW",
+    )
+    return int(resp["Attributes"]["count"])
+
+
+def increment_ip_usage(ip: str) -> int:
+    return _increment_daily_counter(ip)
+
+
+def increment_global_usage() -> int:
+    return _increment_daily_counter("global")
