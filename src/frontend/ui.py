@@ -320,4 +320,4 @@ def fmt_money(v) -> str:
 
 
 def fmt_months(v) -> str:
-    return f"{v:.0f} months" if isinstance(v, (int, float)) else "—"
+    return f"{v:.0f} mo" if isinstance(v, (int, float)) else "—"
